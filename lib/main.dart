@@ -8,6 +8,8 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
+import 'package:app_settings/app_settings.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -377,81 +379,154 @@ Manufacturer: ${androidInfo.manufacturer}
     });
   }
 
+  // Add method to open battery optimization settings
+  Future<void> _openBatteryOptimizationSettings() async {
+    if (Platform.isAndroid) {
+      try {
+        // Use app_settings package with the correct method
+        await AppSettings.openAppSettings(type: AppSettingsType.batteryOptimization);
+      } catch (e) {
+        // Fallback to permission_handler if app_settings fails
+        try {
+          await Permission.ignoreBatteryOptimizations.request();
+        } catch (e2) {
+          print("Failed to open settings: $e2");
+          // Show a dialog with instructions if both methods fail
+          if (mounted) {
+            showDialog(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: Text("Open Settings Manually"),
+                content: Text(
+                  "Please open your device settings and navigate to:\n"
+                  "Battery > Battery Optimization > All Apps > SPITracker\n"
+                  "Then select 'Don't optimize' to allow background operation."
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text("OK"),
+                  ),
+                ],
+              ),
+            );
+          }
+        }
+      }
+    } else {
+      // For iOS or other platforms
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text("Battery Optimization"),
+          content: Text(
+            Platform.isIOS
+                ? "On iOS, please make sure Background App Refresh is enabled in Settings > General > Background App Refresh."
+                : "Battery optimization settings are only available on Android devices."
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text("OK"),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(widget.title)),
       body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // const Text("Device Information", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            // const SizedBox(height: 10),
-            // Text(_deviceInfo),
-            // const SizedBox(height: 20),
-            const Text("Device ID", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            Text(_deviceId, style: TextStyle(fontSize: 16, color: Colors.blue)),
-            const SizedBox(height: 20),
-            // Add location information display
-            const Text("Current Location", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            Container(
-              padding: EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                _locationInfo,
-                style: TextStyle(
-                  color: Colors.blue.shade800,
-                  fontWeight: FontWeight.bold,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // const Text("Device Information", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              // const SizedBox(height: 10),
+              // Text(_deviceInfo),
+              // const SizedBox(height: 20),
+              const Text("Device ID", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              Text(_deviceId, style: TextStyle(fontSize: 16, color: Colors.blue)),
+              const SizedBox(height: 20),
+              // Add location information display
+              const Text("Current Location", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              Container(
+                padding: EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _locationInfo,
+                  style: TextStyle(
+                    color: Colors.blue.shade800,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 10),
-            TextButton.icon(
-              onPressed: _updateLocationInfo,
-              icon: Icon(Icons.my_location),
-              label: Text("Update Location"),
-            ),
-            const SizedBox(height: 20),
-            // Add service status indicator
-            Container(
-              padding: EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: _isBackgroundEnabled ? Colors.green.withOpacity(0.2) : Colors.red.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(8),
+              const SizedBox(height: 10),
+              TextButton.icon(
+                onPressed: _updateLocationInfo,
+                icon: Icon(Icons.my_location),
+                label: Text("Update Location"),
               ),
-              child: Text(
-                _serviceStatus,
-                style: TextStyle(
-                  color: _isBackgroundEnabled ? Colors.green.shade800 : Colors.red.shade800,
-                  fontWeight: FontWeight.bold,
+              const SizedBox(height: 20),
+              // Add service status indicator
+              Container(
+                padding: EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: _isBackgroundEnabled ? Colors.green.withOpacity(0.2) : Colors.red.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _serviceStatus,
+                  style: TextStyle(
+                    color: _isBackgroundEnabled ? Colors.green.shade800 : Colors.red.shade800,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 10),
-            ElevatedButton(
-              onPressed: _toggleBackgroundService,
-              child: Text(_isBackgroundEnabled ? "Stop Background" : "Start Background"),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _isApiCalling ? null : _callApiImmediately,
-              child: _isApiCalling ? CircularProgressIndicator() : const Text("Send API Now"),
-            ),
-            const SizedBox(height: 10),
-            Text(_apiStatus, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)),
-            // Add refresh button to manually check service status
-            const SizedBox(height: 20),
-            TextButton.icon(
-              onPressed: _checkServiceStatus,
-              icon: Icon(Icons.refresh),
-              label: Text("Refresh Status"),
-            ),
-          ],
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ElevatedButton(
+                    onPressed: _toggleBackgroundService,
+                    child: Text(_isBackgroundEnabled ? "Stop Background" : "Start Background"),
+                  ),
+                  const SizedBox(width: 10),
+                  // Add battery optimization settings button
+                  ElevatedButton.icon(
+                    onPressed: _openBatteryOptimizationSettings,
+                    icon: Icon(Icons.battery_charging_full),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange,
+                    ),
+                    label: Text("Battery Settings"),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _isApiCalling ? null : _callApiImmediately,
+                child: _isApiCalling ? CircularProgressIndicator() : const Text("Send API Now"),
+              ),
+              const SizedBox(height: 10),
+              Text(_apiStatus, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)),
+              // Add refresh button to manually check service status
+              const SizedBox(height: 20),
+              TextButton.icon(
+                onPressed: _checkServiceStatus,
+                icon: Icon(Icons.refresh),
+                label: Text("Refresh Status"),
+              ),
+            ],
+          ),
         ),
       ),
     );
