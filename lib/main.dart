@@ -38,6 +38,9 @@ Future<void> initializeService() async {
 void onStart(ServiceInstance service) async {
   print("Background Service Started");
 
+  // Request location permission when service starts
+  await _checkAndRequestLocationPermission();
+
   Timer? timer;
   timer = Timer.periodic(const Duration(minutes: 1), (t) async {
     if (service is AndroidServiceInstance) {
@@ -53,7 +56,39 @@ void onStart(ServiceInstance service) async {
     print("Background service stopped.");
     service.stopSelf();
   });
+}
 
+// Check and request location permission
+Future<bool> _checkAndRequestLocationPermission() async {
+  bool serviceEnabled;
+  LocationPermission permission;
+
+  // Test if location services are enabled.
+  serviceEnabled = await Geolocator.isLocationServiceEnabled();
+  if (!serviceEnabled) {
+    // Location services are not enabled
+    print('Location services are disabled.');
+    return false;
+  }
+
+  permission = await Geolocator.checkPermission();
+  if (permission == LocationPermission.denied) {
+    permission = await Geolocator.requestPermission();
+    if (permission == LocationPermission.denied) {
+      // Permissions are denied
+      print('Location permissions are denied');
+      return false;
+    }
+  }
+  
+  if (permission == LocationPermission.deniedForever) {
+    // Permissions are denied forever
+    print('Location permissions are permanently denied');
+    return false;
+  }
+
+  // Permissions are granted
+  return true;
 }
 
 // iOS Background Task
@@ -69,6 +104,12 @@ Future<String> sendApiData() async {
     final hour = now.hour;
 
     if (hour >= 7 && hour < 24) { // Only run API call during active hours
+      // Check location permission before getting position
+      bool hasPermission = await _checkAndRequestLocationPermission();
+      if (!hasPermission) {
+        return "Error: Location permission denied";
+      }
+      
       final position = await Geolocator.getCurrentPosition();
       final deviceInfoPlugin = DeviceInfoPlugin();
       String deviceId = "Unknown";
@@ -156,6 +197,8 @@ class _MyHomePageState extends State<MyHomePage> {
   String _apiStatus = "API not called yet"; // API call status message
   bool _isBackgroundEnabled = false;
   bool _isApiCalling = false;
+  String _serviceStatus = "Checking..."; // Add service status tracking
+  String _locationInfo = "Location not available"; // Add location info tracking
 
   final DeviceInfoPlugin _deviceInfoPlugin = DeviceInfoPlugin();
 
@@ -165,6 +208,9 @@ class _MyHomePageState extends State<MyHomePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _getDeviceInfo();
       _getDeviceId();
+      _checkServiceStatus(); // Check service status on startup
+      _checkLocationPermission(); // Check location permission on startup
+      _updateLocationInfo(); // Get initial location
     });
   }
 
@@ -230,18 +276,78 @@ Manufacturer: ${androidInfo.manufacturer}
     }
   }
 
-  void _toggleBackgroundService() {
-    if (_isBackgroundEnabled) {
-      FlutterBackgroundService().invoke("stopService");
+  // Add method to check background service status
+  Future<void> _checkServiceStatus() async {
+    try {
+      final service = FlutterBackgroundService();
+      final isRunning = await service.isRunning();
+      
       setState(() {
-        _isBackgroundEnabled = false;
+        _isBackgroundEnabled = isRunning;
+        _serviceStatus = isRunning 
+            ? "Background service is running" 
+            : "Background service is stopped";
       });
-    } else {
-      FlutterBackgroundService().startService();
+    } catch (e) {
       setState(() {
-        _isBackgroundEnabled = true;
+        _serviceStatus = "Error checking service: $e";
       });
     }
+  }
+
+  // Add method to check location permission
+  Future<void> _checkLocationPermission() async {
+    await _checkAndRequestLocationPermission();
+  }
+
+  // Add method to update location information
+  Future<void> _updateLocationInfo() async {
+    try {
+      bool hasPermission = await _checkAndRequestLocationPermission();
+      if (!hasPermission) {
+        setState(() {
+          _locationInfo = "Location permission denied";
+        });
+        return;
+      }
+
+      setState(() {
+        _locationInfo = "Getting location...";
+      });
+
+      final position = await Geolocator.getCurrentPosition();
+      
+      setState(() {
+        _locationInfo = "Latitude: ${position.latitude.toStringAsFixed(6)}\nLongitude: ${position.longitude.toStringAsFixed(6)}";
+      });
+    } catch (e) {
+      setState(() {
+        _locationInfo = "Error getting location: $e";
+      });
+    }
+  }
+
+  void _toggleBackgroundService() async {
+    final service = FlutterBackgroundService();
+    
+    if (_isBackgroundEnabled) {
+      service.invoke("stopService");
+      setState(() {
+        _isBackgroundEnabled = false;
+        _serviceStatus = "Background service stopped";
+      });
+    } else {
+      await service.startService();
+      setState(() {
+        _isBackgroundEnabled = true;
+        _serviceStatus = "Background service started";
+      });
+    }
+    
+    // Verify actual status after a short delay
+    Future.delayed(Duration(milliseconds: 500), () {
+      _checkServiceStatus();
+    });
   }
 
   Future<void> _callApiImmediately() async {
@@ -250,7 +356,20 @@ Manufacturer: ${androidInfo.manufacturer}
       _apiStatus = "Calling API...";
     });
 
+    // Check location permission before calling API
+    bool hasPermission = await _checkAndRequestLocationPermission();
+    if (!hasPermission) {
+      setState(() {
+        _isApiCalling = false;
+        _apiStatus = "Error: Location permission denied";
+      });
+      return;
+    }
+
     String result = await sendApiData();
+    
+    // Update location info after API call
+    _updateLocationInfo();
 
     setState(() {
       _isApiCalling = false;
@@ -266,14 +385,54 @@ Manufacturer: ${androidInfo.manufacturer}
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text("Device Information", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            Text(_deviceInfo),
-            const SizedBox(height: 20),
+            // const Text("Device Information", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            // const SizedBox(height: 10),
+            // Text(_deviceInfo),
+            // const SizedBox(height: 20),
             const Text("Device ID", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             Text(_deviceId, style: TextStyle(fontSize: 16, color: Colors.blue)),
-            const SizedBox(height: 30),
+            const SizedBox(height: 20),
+            // Add location information display
+            const Text("Current Location", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Container(
+              padding: EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _locationInfo,
+                style: TextStyle(
+                  color: Colors.blue.shade800,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextButton.icon(
+              onPressed: _updateLocationInfo,
+              icon: Icon(Icons.my_location),
+              label: Text("Update Location"),
+            ),
+            const SizedBox(height: 20),
+            // Add service status indicator
+            Container(
+              padding: EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: _isBackgroundEnabled ? Colors.green.withOpacity(0.2) : Colors.red.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _serviceStatus,
+                style: TextStyle(
+                  color: _isBackgroundEnabled ? Colors.green.shade800 : Colors.red.shade800,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
             ElevatedButton(
               onPressed: _toggleBackgroundService,
               child: Text(_isBackgroundEnabled ? "Stop Background" : "Start Background"),
@@ -285,9 +444,15 @@ Manufacturer: ${androidInfo.manufacturer}
             ),
             const SizedBox(height: 10),
             Text(_apiStatus, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)),
+            // Add refresh button to manually check service status
+            const SizedBox(height: 20),
+            TextButton.icon(
+              onPressed: _checkServiceStatus,
+              icon: Icon(Icons.refresh),
+              label: Text("Refresh Status"),
+            ),
           ],
         ),
-        
       ),
     );
   }
