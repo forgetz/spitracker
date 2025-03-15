@@ -23,7 +23,7 @@ Future<void> initializeService() async {
     androidConfiguration: AndroidConfiguration(
       onStart: onStart,
       autoStart: true,
-      isForegroundMode: false,
+      isForegroundMode: true,
     ),
     iosConfiguration: IosConfiguration(
       onForeground: onStart,
@@ -38,11 +38,8 @@ Future<void> initializeService() async {
 void onStart(ServiceInstance service) async {
   print("Background Service Started");
 
-  service.on('stopService').listen((event) {
-    service.stopSelf();
-  });
-
-  Timer.periodic(const Duration(minutes: 2), (timer) async {
+  Timer? timer;
+  timer = Timer.periodic(const Duration(minutes: 1), (t) async {
     if (service is AndroidServiceInstance) {
       if (await service.isForegroundService()) {
         print("Running background task...");
@@ -50,6 +47,13 @@ void onStart(ServiceInstance service) async {
       }
     }
   });
+
+  service.on('stopService').listen((event) {
+    timer?.cancel(); // Stop periodic timer
+    print("Background service stopped.");
+    service.stopSelf();
+  });
+
 }
 
 // iOS Background Task
@@ -93,17 +97,17 @@ Future<String> sendApiData() async {
           'device_id': deviceId,
           'latitude': position.latitude.toString(),
           'longitude': position.longitude.toString(),
-           'android_version': androidVersion,
+          'android_version': androidVersion,
           'model': model,
         },
       );
 
       if (response.statusCode == 200) {
         print("API call successful.");
-        return "Completed on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
+        return "Completed 200 on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
       } else {
         print("API call failed: ${response.statusCode}");
-        return "Failed on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
+        return "Failed Status ${response.statusCode} on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
       }
     }
     return "Skipped (Out of Active Hours)";
@@ -283,6 +287,7 @@ Manufacturer: ${androidInfo.manufacturer}
             Text(_apiStatus, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)),
           ],
         ),
+        
       ),
     );
   }
