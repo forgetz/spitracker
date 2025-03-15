@@ -42,7 +42,7 @@ void onStart(ServiceInstance service) async {
     service.stopSelf();
   });
 
-  Timer.periodic(const Duration(minutes: 15), (timer) async {
+  Timer.periodic(const Duration(minutes: 2), (timer) async {
     if (service is AndroidServiceInstance) {
       if (await service.isForegroundService()) {
         print("Running background task...");
@@ -59,7 +59,7 @@ Future<bool> onBackground(ServiceInstance service) async {
 }
 
 // API Call Function
-Future<void> sendApiData() async {
+Future<String> sendApiData() async {
   try {
     final now = DateTime.now();
     final hour = now.hour;
@@ -68,13 +68,23 @@ Future<void> sendApiData() async {
       final position = await Geolocator.getCurrentPosition();
       final deviceInfoPlugin = DeviceInfoPlugin();
       String deviceId = "Unknown";
+      String androidVersion = "Unknown";
+      String model = "Unknown";
 
       if (Platform.isAndroid) {
         final androidInfo = await deviceInfoPlugin.androidInfo;
-        deviceId = androidInfo.id;
+        deviceId = androidInfo.id ?? "Unknown";
+        androidVersion = androidInfo.version.release ?? "Unknown";
+        model = androidInfo.model ?? "Unknown";
       } else if (Platform.isIOS) {
         final iosInfo = await deviceInfoPlugin.iosInfo;
         deviceId = iosInfo.identifierForVendor ?? "Unknown";
+        androidVersion = iosInfo.systemVersion ?? "Unknown";
+        model = iosInfo.model ?? "Unknown";
+      }
+
+      if (deviceId.isEmpty || position.latitude == null || position.longitude == null) {
+        return "Error: Missing Required Data";
       }
 
       final response = await http.post(
@@ -83,18 +93,33 @@ Future<void> sendApiData() async {
           'device_id': deviceId,
           'latitude': position.latitude.toString(),
           'longitude': position.longitude.toString(),
+           'android_version': androidVersion,
+          'model': model,
         },
       );
 
       if (response.statusCode == 200) {
         print("API call successful.");
+        return "Completed on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
       } else {
         print("API call failed: ${response.statusCode}");
+        return "Failed on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
       }
     }
+    return "Skipped (Out of Active Hours)";
   } catch (e) {
     print("Error in API call: $e");
+    return "Error: $e";
   }
+}
+
+// Convert month number to month name
+String _getMonthName(int month) {
+  const monthNames = [
+    "", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+  ];
+  return monthNames[month];
 }
 
 class MyApp extends StatelessWidget {
@@ -123,8 +148,8 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   String _deviceInfo = 'Loading device info...';
-  String _locationInfo = 'Loading location...';
   String _deviceId = 'Loading device ID...';
+  String _apiStatus = "API not called yet"; // API call status message
   bool _isBackgroundEnabled = false;
   bool _isApiCalling = false;
 
@@ -135,7 +160,6 @@ class _MyHomePageState extends State<MyHomePage> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _getDeviceInfo();
-      _getLocation();
       _getDeviceId();
     });
   }
@@ -187,7 +211,6 @@ Platform: ${webInfo.platform}
 Device: ${androidInfo.model}
 Brand: ${androidInfo.brand}
 Android Version: ${androidInfo.version.release}
-SDK Version: ${androidInfo.version.sdkInt}
 Manufacturer: ${androidInfo.manufacturer}
 ''';
         });
@@ -199,45 +222,6 @@ Manufacturer: ${androidInfo.manufacturer}
     } catch (e) {
       setState(() {
         _deviceInfo = 'Error getting device info: $e';
-      });
-    }
-  }
-
-  Future<void> _getLocation() async {
-    try {
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          setState(() {
-            _locationInfo = 'Location permission denied';
-          });
-          return;
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        setState(() {
-          _locationInfo = 'Location permission permanently denied';
-        });
-        return;
-      }
-
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-
-      setState(() {
-        _locationInfo = '''
-Latitude: ${position.latitude}
-Longitude: ${position.longitude}
-Altitude: ${position.altitude}
-Accuracy: ${position.accuracy}m
-''';
-      });
-    } catch (e) {
-      setState(() {
-        _locationInfo = 'Error getting location: $e';
       });
     }
   }
@@ -259,12 +243,14 @@ Accuracy: ${position.accuracy}m
   Future<void> _callApiImmediately() async {
     setState(() {
       _isApiCalling = true;
+      _apiStatus = "Calling API...";
     });
 
-    await sendApiData();
+    String result = await sendApiData();
 
     setState(() {
       _isApiCalling = false;
+      _apiStatus = result;
     });
   }
 
@@ -276,9 +262,14 @@ Accuracy: ${position.accuracy}m
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            const Text("Device Information", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
             Text(_deviceInfo),
-            Text(_deviceId),
-            Text(_locationInfo),
+            const SizedBox(height: 20),
+            const Text("Device ID", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Text(_deviceId, style: TextStyle(fontSize: 16, color: Colors.blue)),
+            const SizedBox(height: 30),
             ElevatedButton(
               onPressed: _toggleBackgroundService,
               child: Text(_isBackgroundEnabled ? "Stop Background" : "Start Background"),
@@ -288,6 +279,8 @@ Accuracy: ${position.accuracy}m
               onPressed: _isApiCalling ? null : _callApiImmediately,
               child: _isApiCalling ? CircularProgressIndicator() : const Text("Send API Now"),
             ),
+            const SizedBox(height: 10),
+            Text(_apiStatus, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)),
           ],
         ),
       ),
