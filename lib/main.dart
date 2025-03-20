@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -10,6 +11,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:app_settings/app_settings.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter/foundation.dart';
 
 class MyHttpOverrides extends HttpOverrides {
   @override
@@ -35,10 +37,15 @@ Future<void> initializeService() async {
       onStart: onStart,
       autoStart: true,
       isForegroundMode: true,
+      foregroundServiceNotificationId: 888,
+      initialNotificationTitle: 'SPITracker',
+      initialNotificationContent: 'Tracking location in background',
+      // foregroundServiceNotificationTitle: 'SPITracker',
     ),
     iosConfiguration: IosConfiguration(
       onForeground: onStart,
       onBackground: onBackground,
+      autoStart: true,
     ),
   );
 
@@ -46,27 +53,38 @@ Future<void> initializeService() async {
 }
 
 // Background service logic
+@pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
+  DartPluginRegistrant.ensureInitialized();
+  
+  // Add certificate bypass for background service
+  HttpOverrides.global = MyHttpOverrides();
+  
   print("Background Service Started");
 
   // Request location permission when service starts
   await _checkAndRequestLocationPermission();
 
-  Timer? timer;
-  timer = Timer.periodic(const Duration(minutes: 1), (t) async {
-    if (service is AndroidServiceInstance) {
+  if (service is AndroidServiceInstance) {
+    service.on('stopService').listen((event) {
+      service.stopSelf();
+    });
+
+    // Update notification content periodically
+    Timer.periodic(const Duration(minutes: 1), (timer) async {
       if (await service.isForegroundService()) {
+        // Update notification content
+        service.setForegroundNotificationInfo(
+          title: "SPITracker",
+          content: "Last update: ${DateTime.now().toString().split('.').first}",
+        );
+
         print("Running background task...");
         await sendApiData();
+        
       }
-    }
-  });
-
-  service.on('stopService').listen((event) {
-    timer?.cancel(); // Stop periodic timer
-    print("Background service stopped.");
-    service.stopSelf();
-  });
+    });
+  }
 }
 
 // Check and request location permission
@@ -151,26 +169,35 @@ Future<String> sendApiData() async {
           'longitude': position.longitude.toString(),
           'androidVersion': androidVersion,
           'model': model,
-        });
+      });
 
-      final response = await http.post(
-        Uri.parse('https://gpstracking-tkgsit.aeonth.com/v1/GPS/gps-save-papi'),
-        headers: {'Content-Type': 'application/json'},
-        body: body,
-      ).timeout(
+      // Create a custom HTTP client that ignores certificate verification
+      final httpClient = HttpClient()
+        ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
+      
+      final request = await httpClient.postUrl(
+        Uri.parse('https://gpstracking-tkgsit.aeonth.com/v1/GPS/gps-save-papi')
+      );
+      
+      request.headers.set('content-type', 'application/json');
+      request.write(body);
+      
+      final response = await request.close().timeout(
         Duration(seconds: 20),
         onTimeout: () {
           throw TimeoutException('The connection has timed out');
         },
       );
 
+      final responseBody = await response.transform(utf8.decoder).join();
+
       if (response.statusCode == 200) {
         print("API call successful.");
         return "Completed 200 on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
       } else {
         print("Body: ${body}");
-        print("API call failed: ${response.statusCode} ${response.body}");
-        return "Failed Status ${response.statusCode} ${response.body} on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
+        print("API call failed: ${response.statusCode} ${responseBody}");
+        return "Failed Status ${response.statusCode} ${responseBody} on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
       }
     }
     return "Skipped (Out of Active Hours)";
