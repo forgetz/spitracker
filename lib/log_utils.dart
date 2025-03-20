@@ -36,9 +36,14 @@ const String LOG_FILE_PATH = AppConfig.LOG_FILE_NAME;
 
 // Write a log entry to the file
 Future<void> writeLogToFile(String message, {String level = 'INFO'}) async {
+  // Skip if file logging is disabled or this log level is disabled
+  if (!AppConfig.ENABLE_FILE_LOGGING || !AppConfig.shouldLogLevel(level)) {
+    return;
+  }
+  
   try {
     final directory = await getApplicationDocumentsDirectory();
-    final file = File('${directory.path}/$LOG_FILE_PATH');
+    final file = File('${directory.path}/${AppConfig.LOG_FILE_NAME}');
     
     // Ensure the message doesn't contain characters that would break JSON
     String safeMessage = message.replaceAll('"', '\\"');
@@ -57,7 +62,7 @@ Future<void> writeLogToFile(String message, {String level = 'INFO'}) async {
     // If JSON encoding fails, try a simpler format
     try {
       final directory = await getApplicationDocumentsDirectory();
-      final file = File('${directory.path}/$LOG_FILE_PATH');
+      final file = File('${directory.path}/${AppConfig.LOG_FILE_NAME}');
       final timestamp = DateTime.now().toIso8601String();
       await file.writeAsString('{"message":"$level: $message","level":"$level","timestamp":"$timestamp"}\n', 
           mode: FileMode.append);
@@ -73,7 +78,7 @@ Future<List<LogEntry>> loadLogsFromFile() async {
   
   try {
     final directory = await getApplicationDocumentsDirectory();
-    final file = File('${directory.path}/$LOG_FILE_PATH');
+    final file = File('${directory.path}/${AppConfig.LOG_FILE_NAME}');
     
     if (await file.exists()) {
       final content = await file.readAsString();
@@ -89,15 +94,15 @@ Future<List<LogEntry>> loadLogsFromFile() async {
               DateTime.tryParse(logJson['timestamp'] ?? '') ?? DateTime.now(),
             ));
           } catch (e) {
-            //print('Error parsing log entry: $e - Content: $line');
+            print('Error parsing log entry: $e - Content: $line');
             // Try to recover the message even if JSON is corrupted
-            // if (line.contains(':')) {
-            //   logs.add(LogEntry(
-            //     line,
-            //     'ERROR',
-            //     DateTime.now(),
-            //   ));
-            // }
+            if (line.contains(':')) {
+              logs.add(LogEntry(
+                line,
+                'ERROR',
+                DateTime.now(),
+              ));
+            }
           }
         }
       }
@@ -106,8 +111,8 @@ Future<List<LogEntry>> loadLogsFromFile() async {
       logs.sort((a, b) => a.timestamp.compareTo(b.timestamp));
       
       // Limit the number of logs
-      if (logs.length > MAX_LOGS) {
-        logs = logs.sublist(logs.length - MAX_LOGS);
+      if (logs.length > AppConfig.MAX_LOG_ENTRIES) {
+        logs = logs.sublist(logs.length - AppConfig.MAX_LOG_ENTRIES);
       }
     }
   } catch (e) {
@@ -121,7 +126,7 @@ Future<List<LogEntry>> loadLogsFromFile() async {
 Future<void> clearLogs() async {
   try {
     final directory = await getApplicationDocumentsDirectory();
-    final file = File('${directory.path}/$LOG_FILE_PATH');
+    final file = File('${directory.path}/${AppConfig.LOG_FILE_NAME}');
     
     if (await file.exists()) {
       await file.delete();
@@ -132,12 +137,24 @@ Future<void> clearLogs() async {
 }
 
 // Print to console and log to file
-void myPrint(String message) {
-  print(message);
-  // Try-catch to prevent any errors in logging from affecting app operation
-  try {
-    writeLogToFile(message);
-  } catch (e) {
-    print('Error in myPrint: $e');
+void myPrint(String message, {String level = 'INFO'}) {
+  // Console logging
+  if (AppConfig.ENABLE_CONSOLE_LOGGING && AppConfig.shouldLogLevel(level)) {
+    print("[$level] $message");
   }
-} 
+  
+  // File logging
+  try {
+    writeLogToFile(message, level: level);
+  } catch (e) {
+    if (AppConfig.ENABLE_CONSOLE_LOGGING) {
+      print('Error in myPrint: $e');
+    }
+  }
+}
+
+// Enhanced logging methods for different log levels
+void logInfo(String message) => myPrint(message, level: 'INFO');
+void logWarning(String message) => myPrint(message, level: 'WARNING');
+void logError(String message) => myPrint(message, level: 'ERROR');
+void logDebug(String message) => myPrint(message, level: 'DEBUG'); 

@@ -30,4 +30,21 @@ class AppConfig {
   // Log settings
   static const int MAX_LOG_ENTRIES = 1000;
   static const String LOG_FILE_NAME = 'app_logs.txt';
+  
+  // Logging control
+  static bool ENABLE_FILE_LOGGING = true;    // Controls writing logs to file
+  static bool ENABLE_CONSOLE_LOGGING = true; // Controls writing logs to console
+  
+  // Log levels to capture
+  static const List<String> ENABLED_LOG_LEVELS = [
+    'INFO',
+    'WARNING',
+    'ERROR',
+    'DEBUG'
+  ];
+  
+  // Check if a specific log level should be captured
+  static bool shouldLogLevel(String level) {
+    return ENABLED_LOG_LEVELS.contains(level.toUpperCase());
+  }
 } 
