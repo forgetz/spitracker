@@ -13,6 +13,11 @@ import 'package:app_settings/app_settings.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:developer' as developer;
+import 'dart:collection';
+import 'package:path_provider/path_provider.dart';
+import 'log_screen.dart'; // Add this import for the LogScreen
+import 'log_utils.dart';
 
 class MyHttpOverrides extends HttpOverrides {
   @override
@@ -63,7 +68,7 @@ void onStart(ServiceInstance service) async {
   // Add certificate bypass for background service
   HttpOverrides.global = MyHttpOverrides();
   
-  print("Background Service Started");
+  myPrint("Background Service Started");
 
   // Create instances needed for the background service
   final deviceInfoPlugin = DeviceInfoPlugin();
@@ -78,21 +83,21 @@ void onStart(ServiceInstance service) async {
       deviceId = androidInfo.id ?? "Unknown";
       androidVersion = androidInfo.version.release ?? "Unknown";
       model = androidInfo.model ?? "Unknown";
-      print("Device info loaded: $deviceId, $model, $androidVersion");
+      myPrint("Device info loaded: $deviceId, $model, $androidVersion");
     } else if (Platform.isIOS) {
       final iosInfo = await deviceInfoPlugin.iosInfo;
       deviceId = iosInfo.identifierForVendor ?? "Unknown";
       androidVersion = iosInfo.systemVersion ?? "Unknown";
       model = iosInfo.model ?? "Unknown";
     }
-    print("Device info loaded successfully");
+    myPrint("Device info loaded successfully");
   } catch (e) {
-    print("Error getting device info: $e");
+    myPrint("Error getting device info: $e");
   }
 
   // Request location permission when service starts
   await _checkAndRequestLocationPermission();
-  print("Location permissions checked");
+  myPrint("Location permissions checked");
 
   // Initialize position variables
   Position? lastPosition;
@@ -102,21 +107,21 @@ void onStart(ServiceInstance service) async {
   );
 
   // Set up position stream subscription
-  print("Setting up location stream");
+  myPrint("Setting up location stream");
   StreamSubscription<Position>? positionStream;
   try {
     positionStream = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
       (Position position) {
-        print("New position received: ${position.latitude}, ${position.longitude}");
+        myPrint("New position received: ${position.latitude}, ${position.longitude}");
         lastPosition = position;
       },
       onError: (error) {
-        print("Position stream error: $error");
+        myPrint("Position stream error: $error");
       }
     );
-    print("Position stream initialized");
+    myPrint("Position stream initialized");
   } catch (e) {
-    print("Error setting up position stream: $e");
+    myPrint("Error setting up position stream: $e");
   }
 
   if (service is AndroidServiceInstance) {
@@ -128,11 +133,11 @@ void onStart(ServiceInstance service) async {
     });
 
     await service.setAsForegroundService();
-    print("Service set as foreground service");
+    myPrint("Service set as foreground service");
 
     // Update notification content periodically
     Timer.periodic(const Duration(minutes: 1), (timer) async {
-      print("Timer triggered at ${DateTime.now()}");
+      myPrint("Timer triggered at ${DateTime.now()}");
       if (await service.isForegroundService()) {
         final now = DateTime.now();
         final hour = now.hour;
@@ -144,9 +149,9 @@ void onStart(ServiceInstance service) async {
 
         if (hour >= 7 && hour < 24) { // Only run API call during active hours
           try {
-            print("In active hours, checking location");
+            myPrint("In active hours, checking location");
             if (lastPosition == null) {
-              print("No position data available yet");
+              myPrint("No position data available yet");
               service.setForegroundNotificationInfo(
                 title: "SPITracker",
                 content: "Waiting for location data...",
@@ -154,7 +159,7 @@ void onStart(ServiceInstance service) async {
               return;
             }
 
-            print("Preparing API call with position: ${lastPosition!.latitude}, ${lastPosition!.longitude}");
+            myPrint("Preparing API call with position: ${lastPosition!.latitude}, ${lastPosition!.longitude}");
             
             // Prepare API call
             final body = jsonEncode({
@@ -165,7 +170,7 @@ void onStart(ServiceInstance service) async {
               'model': model,
             });
 
-            print("Sending API request...");
+            myPrint("Sending API request...");
             // Create HTTP client
             final httpClient = HttpClient()
               ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
@@ -182,36 +187,36 @@ void onStart(ServiceInstance service) async {
 
             // Update notification with status
             if (response.statusCode == 200) {
-              print("Background API call successful");
+              myPrint("Background API call successful");
               service.setForegroundNotificationInfo(
                 title: "SPITracker",
                 content: "Last update: ${now.toString().split('.').first} (Success)",
               );
             } else {
-              print("Background API call failed: ${response.statusCode}");
+              myPrint("Background API call failed: ${response.statusCode}");
               service.setForegroundNotificationInfo(
                 title: "SPITracker",
                 content: "Last update failed: ${now.toString().split('.').first}",
               );
             }
           } catch (e) {
-            print("Error in API call: $e");
+            myPrint("Error in API call: $e");
             service.setForegroundNotificationInfo(
               title: "SPITracker",
               content: "Error: ${e.toString().split('\n').first}",
             );
           }
         } else {
-          print("Outside active hours");
+          myPrint("Outside active hours");
           service.setForegroundNotificationInfo(
             title: "SPITracker",
             content: "Outside active hours (7:00-24:00)",
           );
         }
 
-        print("Background cycle completed");
+        myPrint("Background cycle completed");
       } else {
-        print("Service not in foreground, attempting to set as foreground");
+        myPrint("Service not in foreground, attempting to set as foreground");
         await service.setAsForegroundService();
       }
     });
@@ -227,7 +232,7 @@ Future<bool> _checkAndRequestLocationPermission() async {
   serviceEnabled = await Geolocator.isLocationServiceEnabled();
   if (!serviceEnabled) {
     // Location services are not enabled
-    print('Location services are disabled.');
+    myPrint('Location services are disabled.');
     return false;
   }
 
@@ -236,14 +241,14 @@ Future<bool> _checkAndRequestLocationPermission() async {
     permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.denied) {
       // Permissions are denied
-      print('Location permissions are denied');
+      myPrint('Location permissions are denied');
       return false;
     }
   }
   
   if (permission == LocationPermission.deniedForever) {
     // Permissions are denied forever
-    print('Location permissions are permanently denied');
+    myPrint('Location permissions are permanently denied');
     return false;
   }
 
@@ -253,7 +258,7 @@ Future<bool> _checkAndRequestLocationPermission() async {
 
 // iOS Background Task
 Future<bool> onBackground(ServiceInstance service) async {
-  print("Background service running in background mode.");
+  myPrint("Background service running in background mode.");
   return true;
 }
 
@@ -292,7 +297,7 @@ Future<String> sendApiData() async {
         return "Error: Missing Required Data";
       }
 
-      print("calling API...");
+      myPrint("calling API...");
 
       final body = jsonEncode({
           'deviceId': deviceId,
@@ -323,17 +328,17 @@ Future<String> sendApiData() async {
       final responseBody = await response.transform(utf8.decoder).join();
 
       if (response.statusCode == 200) {
-        print("API call successful.");
+        myPrint("API call successful.");
         return "Completed 200 on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
       } else {
-        print("Body: ${body}");
-        print("API call failed: ${response.statusCode} ${responseBody}");
+        myPrint("Body: ${body}");
+        myPrint("API call failed: ${response.statusCode} ${responseBody}");
         return "Failed Status ${response.statusCode} ${responseBody} on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
       }
     }
     return "Skipped (Out of Active Hours)";
   } catch (e) {
-    print("Error in API call: $e");
+    myPrint("Error in API call: $e");
     return "Error: $e";
   }
 }
@@ -355,7 +360,8 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Device Info App',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color.fromARGB(255, 27, 50, 176)),
+        primarySwatch: Colors.blue,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
       home: const MyHomePage(title: 'SPITracker'),
       debugShowCheckedModeBanner: false,
@@ -577,7 +583,7 @@ Manufacturer: ${androidInfo.manufacturer}
         try {
           await Permission.ignoreBatteryOptimizations.request();
         } catch (e2) {
-          print("Failed to open settings: $e2");
+          myPrint("Failed to open settings: $e2");
           // Show a dialog with instructions if both methods fail
           if (mounted) {
             showDialog(
@@ -625,45 +631,89 @@ Manufacturer: ${androidInfo.manufacturer}
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.title)),
+      appBar: AppBar(
+        title: Text(widget.title),
+        elevation: 4, // Add shadow to AppBar
+        actions: [
+          // Add debug log menu option
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'debug_logs') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => LogScreen()),
+                );
+              }
+            },
+            itemBuilder: (BuildContext context) {
+              return [
+                PopupMenuItem<String>(
+                  value: 'debug_logs',
+                  child: Row(
+                    children: [
+                      Icon(Icons.bug_report, color: Colors.blue),
+                      SizedBox(width: 8),
+                      Text('Debug Logs'),
+                    ],
+                  ),
+                ),
+              ];
+            },
+          ),
+        ],
+      ),
       body: Center(
         child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16.0), // Add padding around the content
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text("Application", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              Text(_appVersion),
+              const Text("Application", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
               const SizedBox(height: 20),
-              const Text("Device ID", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              Text(_deviceId, style: TextStyle(fontSize: 16, color: Colors.blue)),
-              const SizedBox(height: 20),
-              // Add location information display
-              const Text("Current Location", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              Container(
-                padding: EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
+              Card(
+                elevation: 4,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Text(_appVersion, style: TextStyle(fontSize: 18)),
                 ),
-                child: Text(
-                  _locationInfo,
-                  style: TextStyle(
-                    color: Colors.blue.shade800,
-                    fontWeight: FontWeight.bold,
+              ),
+              const SizedBox(height: 20),
+              const Text("Device ID", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              Card(
+                elevation: 4,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Text(_deviceId, style: TextStyle(fontSize: 16, color: Colors.blue)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text("Current Location", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              Card(
+                elevation: 4,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Text(
+                    _locationInfo,
+                    style: TextStyle(
+                      color: Colors.blue.shade800,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ),
-              const SizedBox(height: 10),
-              TextButton.icon(
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
                 onPressed: _updateLocationInfo,
                 icon: Icon(Icons.my_location),
                 label: Text("Update Location"),
+                style: ElevatedButton.styleFrom(
+                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                ),
               ),
               const SizedBox(height: 20),
-              // Add service status indicator
               Container(
                 padding: EdgeInsets.all(10),
                 decoration: BoxDecoration(
@@ -678,23 +728,28 @@ Manufacturer: ${androidInfo.manufacturer}
                   ),
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 20),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   ElevatedButton(
                     onPressed: _toggleBackgroundService,
                     child: Text(_isBackgroundEnabled ? "Stop Background" : "Start Background"),
+                    style: ElevatedButton.styleFrom(
+                      padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                    ),
                   ),
                   const SizedBox(width: 10),
-                  // Add battery optimization settings button
                   ElevatedButton.icon(
                     onPressed: _openBatteryOptimizationSettings,
                     icon: Icon(Icons.battery_charging_full),
+                    label: Text("Battery Settings"),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.orange,
+                      padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                     ),
-                    label: Text("Battery Settings"),
                   ),
                 ],
               ),
@@ -702,10 +757,13 @@ Manufacturer: ${androidInfo.manufacturer}
               ElevatedButton(
                 onPressed: _isApiCalling ? null : _callApiImmediately,
                 child: _isApiCalling ? CircularProgressIndicator() : const Text("Send API Now"),
+                style: ElevatedButton.styleFrom(
+                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                ),
               ),
               const SizedBox(height: 10),
               Text(_apiStatus, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)),
-              // Add refresh button to manually check service status
               const SizedBox(height: 20),
               TextButton.icon(
                 onPressed: _checkServiceStatus,
