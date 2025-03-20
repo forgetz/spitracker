@@ -497,9 +497,8 @@ class _MyHomePageState extends State<MyHomePage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
-        elevation: 4, // Add shadow to AppBar
+        elevation: 4,
         actions: [
-          // Add debug log menu option
           PopupMenuButton<String>(
             onSelected: (value) {
               if (value == 'debug_logs') {
@@ -526,118 +525,226 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         ],
       ),
-      body: Center(
+      body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16.0), // Add padding around the content
+          padding: const EdgeInsets.all(16.0),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text("Application", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 20),
+              // Version and Service Status Card
               Card(
                 elevation: 4,
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
-                  child: Text(_appVersion, style: TextStyle(fontSize: 18)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Text(
+                          "Application Status",
+                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      SizedBox(height: 16),
+                      _buildInfoTable([
+                        {"App Version": _appVersion},
+                        {"Service Status": _serviceStatus},
+                      ]),
+                      SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          ElevatedButton(
+                            onPressed: _toggleBackgroundService,
+                            child: Text(_isBackgroundEnabled ? "Stop Service" : "Start Service"),
+                            style: ElevatedButton.styleFrom(
+                              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                              backgroundColor: _isBackgroundEnabled ? Colors.red : Colors.green,
+                            ),
+                          ),
+                          SizedBox(width: 10),
+                          ElevatedButton.icon(
+                            onPressed: _openBatteryOptimizationSettings,
+                            icon: Icon(Icons.battery_charging_full),
+                            label: Text("Battery Settings"),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange,
+                              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 20),
-              const Text("Device ID", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
+              
+              SizedBox(height: 20),
+              
+              // Device Information Card
               Card(
                 elevation: 4,
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
-                  child: Text(_deviceId, style: TextStyle(fontSize: 16, color: Colors.blue)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Text(
+                          "Device Information",
+                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      SizedBox(height: 16),
+                      _buildInfoTable([
+                        {"Device ID": _deviceId},
+                        {"Model": _deviceInfoService.deviceModel},
+                        {"OS Version": _deviceInfoService.osVersion},
+                        {"Manufacturer": _deviceInfoService.manufacturer},
+                      ]),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 20),
-              const Text("Current Location", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
+              
+              SizedBox(height: 20),
+              
+              // Location Card
               Card(
                 elevation: 4,
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
-                  child: Text(
-                    _locationInfo,
-                    style: TextStyle(
-                      color: Colors.blue.shade800,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Text(
+                          "Location Data",
+                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      SizedBox(height: 16),
+                      _buildInfoTable([
+                        {"Location": _locationInfo},
+                      ]),
+                      SizedBox(height: 16),
+                      Center(
+                        child: ElevatedButton.icon(
+                          onPressed: _updateLocationInfo,
+                          icon: Icon(Icons.my_location),
+                          label: Text("Update Location"),
+                          style: ElevatedButton.styleFrom(
+                            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              const SizedBox(height: 20),
-              ElevatedButton.icon(
-                onPressed: _updateLocationInfo,
-                icon: Icon(Icons.my_location),
-                label: Text("Update Location"),
-                style: ElevatedButton.styleFrom(
-                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Container(
-                padding: EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: _isBackgroundEnabled ? Colors.green.withOpacity(0.2) : Colors.red.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _serviceStatus,
-                  style: TextStyle(
-                    color: _isBackgroundEnabled ? Colors.green.shade800 : Colors.red.shade800,
-                    fontWeight: FontWeight.bold,
+              
+              SizedBox(height: 20),
+              
+              // API Status Card
+              Card(
+                elevation: 4,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Text(
+                          "API Status",
+                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      SizedBox(height: 16),
+                      _buildInfoTable([
+                        {"Last API Call": _apiStatus},
+                      ]),
+                      SizedBox(height: 16),
+                      Center(
+                        child: ElevatedButton(
+                          onPressed: _isApiCalling ? null : _callApiImmediately,
+                          child: _isApiCalling 
+                              ? SizedBox(
+                                  width: 20, 
+                                  height: 20, 
+                                  child: CircularProgressIndicator(strokeWidth: 2.0, color: Colors.white)
+                                ) 
+                              : Text("Send API Now"),
+                          style: ElevatedButton.styleFrom(
+                            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  ElevatedButton(
-                    onPressed: _toggleBackgroundService,
-                    child: Text(_isBackgroundEnabled ? "Stop Background" : "Start Background"),
-                    style: ElevatedButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  ElevatedButton.icon(
-                    onPressed: _openBatteryOptimizationSettings,
-                    icon: Icon(Icons.battery_charging_full),
-                    label: Text("Battery Settings"),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orange,
-                      padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: _isApiCalling ? null : _callApiImmediately,
-                child: _isApiCalling ? CircularProgressIndicator() : const Text("Send API Now"),
-                style: ElevatedButton.styleFrom(
-                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+              
+              SizedBox(height: 20),
+              
+              // Refresh Button
+              Center(
+                child: TextButton.icon(
+                  onPressed: () {
+                    _checkServiceStatus();
+                    _updateLocationInfo();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text("Status refreshed"))
+                    );
+                  },
+                  icon: Icon(Icons.refresh),
+                  label: Text("Refresh All Status"),
                 ),
-              ),
-              const SizedBox(height: 10),
-              Text(_apiStatus, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.green)),
-              const SizedBox(height: 20),
-              TextButton.icon(
-                onPressed: _checkServiceStatus,
-                icon: Icon(Icons.refresh),
-                label: Text("Refresh Status"),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  // Add this helper method to create tables
+  Widget _buildInfoTable(List<Map<String, String>> data) {
+    return Table(
+      border: TableBorder.all(
+        color: Colors.grey.shade300,
+        width: 1,
+      ),
+      columnWidths: {
+        0: FlexColumnWidth(2),
+        1: FlexColumnWidth(3),
+      },
+      children: data.map((row) {
+        String title = row.keys.first;
+        String value = row.values.first;
+        
+        return TableRow(
+          decoration: BoxDecoration(
+            color: Colors.white,
+          ),
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Text(
+                title,
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Text(value),
+            ),
+          ],
+        );
+      }).toList(),
     );
   }
 }
