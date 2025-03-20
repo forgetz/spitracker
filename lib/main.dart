@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 import 'package:app_settings/app_settings.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/foundation.dart';
 
@@ -378,6 +379,7 @@ class _MyHomePageState extends State<MyHomePage> {
   bool _isApiCalling = false;
   String _serviceStatus = "Checking..."; // Add service status tracking
   String _locationInfo = "Location not available"; // Add location info tracking
+  String _appVersion = "Loading applicaton version";
 
   final DeviceInfoPlugin _deviceInfoPlugin = DeviceInfoPlugin();
 
@@ -390,6 +392,14 @@ class _MyHomePageState extends State<MyHomePage> {
       _checkServiceStatus(); // Check service status on startup
       _checkLocationPermission(); // Check location permission on startup
       _updateLocationInfo(); // Get initial location
+      _initPackageInfo();
+    });
+  }
+
+  Future<void> _initPackageInfo() async { 
+    final PackageInfo info = await PackageInfo.fromPlatform();
+    setState(() {
+      _appVersion = info.version;
     });
   }
 
@@ -621,10 +631,10 @@ Manufacturer: ${androidInfo.manufacturer}
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // const Text("Device Information", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              // const SizedBox(height: 10),
-              // Text(_deviceInfo),
-              // const SizedBox(height: 20),
+              const Text("Application", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              Text(_appVersion),
+              const SizedBox(height: 20),
               const Text("Device ID", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
               Text(_deviceId, style: TextStyle(fontSize: 16, color: Colors.blue)),
