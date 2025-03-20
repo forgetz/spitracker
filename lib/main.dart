@@ -18,6 +18,9 @@ import 'dart:collection';
 import 'package:path_provider/path_provider.dart';
 import 'log_screen.dart'; // Add this import for the LogScreen
 import 'log_utils.dart';
+import 'location_service.dart';
+import 'app_config.dart';
+import 'device_info_service.dart';
 
 class MyHttpOverrides extends HttpOverrides {
   @override
@@ -70,65 +73,18 @@ void onStart(ServiceInstance service) async {
   
   myPrint("Background Service Started");
 
-  // Create instances needed for the background service
-  final deviceInfoPlugin = DeviceInfoPlugin();
-  String deviceId = "Unknown";
-  String androidVersion = "Unknown";
-  String model = "Unknown";
-
-  // Get device info once at startup
-  try {
-    if (Platform.isAndroid) {
-      final androidInfo = await deviceInfoPlugin.androidInfo;
-      deviceId = androidInfo.id ?? "Unknown";
-      androidVersion = androidInfo.version.release ?? "Unknown";
-      model = androidInfo.model ?? "Unknown";
-      myPrint("Device info loaded: $deviceId, $model, $androidVersion");
-    } else if (Platform.isIOS) {
-      final iosInfo = await deviceInfoPlugin.iosInfo;
-      deviceId = iosInfo.identifierForVendor ?? "Unknown";
-      androidVersion = iosInfo.systemVersion ?? "Unknown";
-      model = iosInfo.model ?? "Unknown";
-    }
-    myPrint("Device info loaded successfully");
-  } catch (e) {
-    myPrint("Error getting device info: $e");
-  }
-
-  // Request location permission when service starts
-  await _checkAndRequestLocationPermission();
-  myPrint("Location permissions checked");
-
-  // Initialize position variables
-  Position? lastPosition;
-  LocationSettings locationSettings = LocationSettings(
-    accuracy: LocationAccuracy.high,
-    distanceFilter: 10, // minimum distance (meters) before updates
-  );
-
-  // Set up position stream subscription
-  myPrint("Setting up location stream");
-  StreamSubscription<Position>? positionStream;
-  try {
-    positionStream = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
-      (Position position) {
-        myPrint("New position received: ${position.latitude}, ${position.longitude}");
-        lastPosition = position;
-      },
-      onError: (error) {
-        myPrint("Position stream error: $error");
-      }
-    );
-    myPrint("Position stream initialized");
-  } catch (e) {
-    myPrint("Error setting up position stream: $e");
-  }
+  // Use device info service
+  final deviceInfoService = DeviceInfoService();
+  await deviceInfoService.initializeDeviceInfo();
+  
+  // Use location service
+  final locationService = LocationService();
+  await locationService.startTracking();
+  myPrint("Location service initialized");
 
   if (service is AndroidServiceInstance) {
     service.on('stopService').listen((event) {
-      if (positionStream != null) {
-        positionStream.cancel();
-      }
+      locationService.stopTracking();
       service.stopSelf();
     });
 
@@ -136,7 +92,7 @@ void onStart(ServiceInstance service) async {
     myPrint("Service set as foreground service");
 
     // Update notification content periodically
-    Timer.periodic(const Duration(minutes: 1), (timer) async {
+    Timer.periodic(Duration(minutes: AppConfig.BACKGROUND_UPDATE_INTERVAL_MINUTES), (timer) async {
       myPrint("Timer triggered at ${DateTime.now()}");
       if (await service.isForegroundService()) {
         final now = DateTime.now();
@@ -147,9 +103,10 @@ void onStart(ServiceInstance service) async {
           content: "Checking status... ${now.toString().split('.').first}",
         );
 
-        if (hour >= 7 && hour < 24) { // Only run API call during active hours
+        if (AppConfig.isWithinActiveHours(now)) {
           try {
             myPrint("In active hours, checking location");
+            final lastPosition = locationService.lastPosition;
             if (lastPosition == null) {
               myPrint("No position data available yet");
               service.setForegroundNotificationInfo(
@@ -159,15 +116,15 @@ void onStart(ServiceInstance service) async {
               return;
             }
 
-            myPrint("Preparing API call with position: ${lastPosition!.latitude}, ${lastPosition!.longitude}");
+            myPrint("Preparing API call with position: ${lastPosition.latitude}, ${lastPosition.longitude}");
             
-            // Prepare API call
+            // Use device info service for API payload
             final body = jsonEncode({
-              'deviceId': deviceId,
-              'latitude': lastPosition!.latitude.toString(),
-              'longitude': lastPosition!.longitude.toString(),
-              'androidVersion': androidVersion,
-              'model': model,
+              'deviceId': deviceInfoService.deviceId,
+              'latitude': lastPosition.latitude.toString(),
+              'longitude': lastPosition.longitude.toString(),
+              'androidVersion': deviceInfoService.osVersion,
+              'model': deviceInfoService.deviceModel,
             });
 
             myPrint("Sending API request...");
@@ -176,13 +133,19 @@ void onStart(ServiceInstance service) async {
               ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
             
             final request = await httpClient.postUrl(
-              Uri.parse('https://gpstracking-tkgsit.aeonth.com/v1/GPS/gps-save-papi')
+              Uri.parse(AppConfig.getApiUrl())
             );
             
             request.headers.set('content-type', 'application/json');
             request.write(body);
             
-            final response = await request.close();
+            final response = await request.close().timeout(
+              Duration(seconds: AppConfig.API_TIMEOUT_SECONDS),
+              onTimeout: () {
+                throw TimeoutException('The connection has timed out');
+              },
+            );
+
             final responseBody = await response.transform(utf8.decoder).join();
 
             // Update notification with status
@@ -210,7 +173,7 @@ void onStart(ServiceInstance service) async {
           myPrint("Outside active hours");
           service.setForegroundNotificationInfo(
             title: "SPITracker",
-            content: "Outside active hours (7:00-24:00)",
+            content: "Outside active hours (${AppConfig.ACTIVE_HOURS_START}:00-${AppConfig.ACTIVE_HOURS_END}:00)",
           );
         }
 
@@ -223,39 +186,6 @@ void onStart(ServiceInstance service) async {
   }
 }
 
-// Check and request location permission
-Future<bool> _checkAndRequestLocationPermission() async {
-  bool serviceEnabled;
-  LocationPermission permission;
-
-  // Test if location services are enabled.
-  serviceEnabled = await Geolocator.isLocationServiceEnabled();
-  if (!serviceEnabled) {
-    // Location services are not enabled
-    myPrint('Location services are disabled.');
-    return false;
-  }
-
-  permission = await Geolocator.checkPermission();
-  if (permission == LocationPermission.denied) {
-    permission = await Geolocator.requestPermission();
-    if (permission == LocationPermission.denied) {
-      // Permissions are denied
-      myPrint('Location permissions are denied');
-      return false;
-    }
-  }
-  
-  if (permission == LocationPermission.deniedForever) {
-    // Permissions are denied forever
-    myPrint('Location permissions are permanently denied');
-    return false;
-  }
-
-  // Permissions are granted
-  return true;
-}
-
 // iOS Background Task
 Future<bool> onBackground(ServiceInstance service) async {
   myPrint("Background service running in background mode.");
@@ -266,60 +196,48 @@ Future<bool> onBackground(ServiceInstance service) async {
 Future<String> sendApiData() async {
   try {
     final now = DateTime.now();
-    final hour = now.hour;
-
-    if (hour >= 7 && hour < 24) { // Only run API call during active hours
-      // Check location permission before getting position
-      bool hasPermission = await _checkAndRequestLocationPermission();
+    
+    if (AppConfig.isWithinActiveHours(now)) {
+      // Use location service
+      final locationService = LocationService();
+      bool hasPermission = await locationService.checkAndRequestLocationPermission();
       if (!hasPermission) {
         return "Error: Location permission denied";
       }
       
-      final position = await Geolocator.getCurrentPosition();
-      final deviceInfoPlugin = DeviceInfoPlugin();
-      String deviceId = "Unknown";
-      String androidVersion = "Unknown";
-      String model = "Unknown";
-
-      if (Platform.isAndroid) {
-        final androidInfo = await deviceInfoPlugin.androidInfo;
-        deviceId = androidInfo.id ?? "Unknown";
-        androidVersion = androidInfo.version.release ?? "Unknown";
-        model = androidInfo.model ?? "Unknown";
-      } else if (Platform.isIOS) {
-        final iosInfo = await deviceInfoPlugin.iosInfo;
-        deviceId = iosInfo.identifierForVendor ?? "Unknown";
-        androidVersion = iosInfo.systemVersion ?? "Unknown";
-        model = iosInfo.model ?? "Unknown";
+      final position = await locationService.getCurrentPosition();
+      if (position == null) {
+        return "Error: Couldn't get location";
       }
-
-      if (deviceId.isEmpty || position.latitude == null || position.longitude == null) {
-        return "Error: Missing Required Data";
-      }
+      
+      // Use device info service
+      final deviceInfoService = DeviceInfoService();
+      await deviceInfoService.initializeDeviceInfo();
+      
+      // Create API payload
+      final body = jsonEncode({
+        'deviceId': deviceInfoService.deviceId,
+        'latitude': position.latitude.toString(),
+        'longitude': position.longitude.toString(),
+        'androidVersion': deviceInfoService.osVersion,
+        'model': deviceInfoService.deviceModel,
+      });
 
       myPrint("calling API...");
-
-      final body = jsonEncode({
-          'deviceId': deviceId,
-          'latitude': position.latitude.toString(),
-          'longitude': position.longitude.toString(),
-          'androidVersion': androidVersion,
-          'model': model,
-      });
 
       // Create a custom HTTP client that ignores certificate verification
       final httpClient = HttpClient()
         ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
       
       final request = await httpClient.postUrl(
-        Uri.parse('https://gpstracking-tkgsit.aeonth.com/v1/GPS/gps-save-papi')
+        Uri.parse(AppConfig.getApiUrl())
       );
       
       request.headers.set('content-type', 'application/json');
       request.write(body);
       
       final response = await request.close().timeout(
-        Duration(seconds: 20),
+        Duration(seconds: AppConfig.API_TIMEOUT_SECONDS),
         onTimeout: () {
           throw TimeoutException('The connection has timed out');
         },
@@ -385,90 +303,32 @@ class _MyHomePageState extends State<MyHomePage> {
   bool _isApiCalling = false;
   String _serviceStatus = "Checking..."; // Add service status tracking
   String _locationInfo = "Location not available"; // Add location info tracking
-  String _appVersion = "Loading applicaton version";
+  String _appVersion = "Loading application version";
 
-  final DeviceInfoPlugin _deviceInfoPlugin = DeviceInfoPlugin();
+  final LocationService _locationService = LocationService();
+  final DeviceInfoService _deviceInfoService = DeviceInfoService();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _getDeviceInfo();
-      _getDeviceId();
-      _checkServiceStatus(); // Check service status on startup
-      _checkLocationPermission(); // Check location permission on startup
-      _updateLocationInfo(); // Get initial location
-      _initPackageInfo();
+      _initializeServices();
     });
   }
 
-  Future<void> _initPackageInfo() async { 
-    final PackageInfo info = await PackageInfo.fromPlatform();
+  Future<void> _initializeServices() async {
+    // Initialize device info
+    await _deviceInfoService.initializeDeviceInfo();
     setState(() {
-      _appVersion = info.version;
+      _deviceInfo = _deviceInfoService.getFormattedDeviceInfo();
+      _deviceId = _deviceInfoService.deviceId;
+      _appVersion = _deviceInfoService.appVersion;
     });
-  }
-
-  Future<void> _getDeviceId() async {
-    try {
-      if (kIsWeb) {
-        setState(() {
-          _deviceId = 'Device ID not available on web';
-        });
-      } else if (Platform.isAndroid) {
-        final androidInfo = await _deviceInfoPlugin.androidInfo;
-        setState(() {
-          _deviceId = androidInfo.id;
-        });
-      } else if (Platform.isIOS) {
-        final iosInfo = await _deviceInfoPlugin.iosInfo;
-        setState(() {
-          _deviceId = iosInfo.identifierForVendor ?? 'Not available';
-        });
-      } else {
-        setState(() {
-          _deviceId = 'Device ID not available on this platform';
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _deviceId = 'Error getting device ID: $e';
-      });
-    }
-  }
-
-  Future<void> _getDeviceInfo() async {
-    try {
-      if (kIsWeb) {
-        final webInfo = await _deviceInfoPlugin.webBrowserInfo;
-        setState(() {
-          _deviceInfo = '''
-Platform: Web
-Browser: ${webInfo.browserName.name}
-Version: ${webInfo.appVersion}
-Platform: ${webInfo.platform}
-''';
-        });
-      } else if (Platform.isAndroid) {
-        final androidInfo = await _deviceInfoPlugin.androidInfo;
-        setState(() {
-          _deviceInfo = '''
-Device: ${androidInfo.model}
-Brand: ${androidInfo.brand}
-Android Version: ${androidInfo.version.release}
-Manufacturer: ${androidInfo.manufacturer}
-''';
-        });
-      } else {
-        setState(() {
-          _deviceInfo = 'Current platform information not available';
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _deviceInfo = 'Error getting device info: $e';
-      });
-    }
+    
+    // Check other services
+    _checkServiceStatus();
+    _checkLocationPermission();
+    _updateLocationInfo();
   }
 
   // Add method to check background service status
@@ -492,13 +352,13 @@ Manufacturer: ${androidInfo.manufacturer}
 
   // Add method to check location permission
   Future<void> _checkLocationPermission() async {
-    await _checkAndRequestLocationPermission();
+    await _locationService.checkAndRequestLocationPermission();
   }
 
   // Add method to update location information
   Future<void> _updateLocationInfo() async {
     try {
-      bool hasPermission = await _checkAndRequestLocationPermission();
+      bool hasPermission = await _locationService.checkAndRequestLocationPermission();
       if (!hasPermission) {
         setState(() {
           _locationInfo = "Location permission denied";
@@ -510,10 +370,14 @@ Manufacturer: ${androidInfo.manufacturer}
         _locationInfo = "Getting location...";
       });
 
-      final position = await Geolocator.getCurrentPosition();
+      final position = await _locationService.getCurrentPosition();
       
       setState(() {
-        _locationInfo = "Latitude: ${position.latitude.toStringAsFixed(6)}\nLongitude: ${position.longitude.toStringAsFixed(6)}";
+        if (position != null) {
+          _locationInfo = "Latitude: ${position.latitude.toStringAsFixed(6)}\nLongitude: ${position.longitude.toStringAsFixed(6)}";
+        } else {
+          _locationInfo = "Error getting location";
+        }
       });
     } catch (e) {
       setState(() {
@@ -552,7 +416,7 @@ Manufacturer: ${androidInfo.manufacturer}
     });
 
     // Check location permission before calling API
-    bool hasPermission = await _checkAndRequestLocationPermission();
+    bool hasPermission = await _locationService.checkAndRequestLocationPermission();
     if (!hasPermission) {
       setState(() {
         _isApiCalling = false;

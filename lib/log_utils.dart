@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+import 'app_config.dart';  // Import the config
 
 // Log entry model that can be used across the app
 class LogEntry {
@@ -29,9 +30,9 @@ class LogEntry {
   }
 }
 
-// Constants
-const String LOG_FILE_PATH = 'app_logs.txt';
-const int MAX_LOGS = 1000;
+// Constants now come from AppConfig
+const int MAX_LOGS = AppConfig.MAX_LOG_ENTRIES;
+const String LOG_FILE_PATH = AppConfig.LOG_FILE_NAME;
 
 // Write a log entry to the file
 Future<void> writeLogToFile(String message, {String level = 'INFO'}) async {
