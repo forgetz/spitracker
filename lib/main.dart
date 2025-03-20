@@ -41,6 +41,8 @@ Future<void> initializeService() async {
       initialNotificationTitle: 'SPITracker',
       initialNotificationContent: 'Tracking location in background',
       // foregroundServiceNotificationTitle: 'SPITracker',
+      // notificationChannelId: 'spi_tracker_channel',
+      // notificationChannelDescription: 'Shows tracking notification',
     ),
     iosConfiguration: IosConfiguration(
       onForeground: onStart,
@@ -56,32 +58,160 @@ Future<void> initializeService() async {
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
   DartPluginRegistrant.ensureInitialized();
-  
+  WidgetsFlutterBinding.ensureInitialized();
   // Add certificate bypass for background service
   HttpOverrides.global = MyHttpOverrides();
   
   print("Background Service Started");
 
+  // Create instances needed for the background service
+  final deviceInfoPlugin = DeviceInfoPlugin();
+  String deviceId = "Unknown";
+  String androidVersion = "Unknown";
+  String model = "Unknown";
+
+  // Get device info once at startup
+  try {
+    if (Platform.isAndroid) {
+      final androidInfo = await deviceInfoPlugin.androidInfo;
+      deviceId = androidInfo.id ?? "Unknown";
+      androidVersion = androidInfo.version.release ?? "Unknown";
+      model = androidInfo.model ?? "Unknown";
+      print("Device info loaded: $deviceId, $model, $androidVersion");
+    } else if (Platform.isIOS) {
+      final iosInfo = await deviceInfoPlugin.iosInfo;
+      deviceId = iosInfo.identifierForVendor ?? "Unknown";
+      androidVersion = iosInfo.systemVersion ?? "Unknown";
+      model = iosInfo.model ?? "Unknown";
+    }
+    print("Device info loaded successfully");
+  } catch (e) {
+    print("Error getting device info: $e");
+  }
+
   // Request location permission when service starts
   await _checkAndRequestLocationPermission();
+  print("Location permissions checked");
+
+  // Initialize position variables
+  Position? lastPosition;
+  LocationSettings locationSettings = LocationSettings(
+    accuracy: LocationAccuracy.high,
+    distanceFilter: 10, // minimum distance (meters) before updates
+  );
+
+  // Set up position stream subscription
+  print("Setting up location stream");
+  StreamSubscription<Position>? positionStream;
+  try {
+    positionStream = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+      (Position position) {
+        print("New position received: ${position.latitude}, ${position.longitude}");
+        lastPosition = position;
+      },
+      onError: (error) {
+        print("Position stream error: $error");
+      }
+    );
+    print("Position stream initialized");
+  } catch (e) {
+    print("Error setting up position stream: $e");
+  }
 
   if (service is AndroidServiceInstance) {
     service.on('stopService').listen((event) {
+      if (positionStream != null) {
+        positionStream.cancel();
+      }
       service.stopSelf();
     });
 
+    await service.setAsForegroundService();
+    print("Service set as foreground service");
+
     // Update notification content periodically
     Timer.periodic(const Duration(minutes: 1), (timer) async {
+      print("Timer triggered at ${DateTime.now()}");
       if (await service.isForegroundService()) {
-        // Update notification content
+        final now = DateTime.now();
+        final hour = now.hour;
+
         service.setForegroundNotificationInfo(
           title: "SPITracker",
-          content: "Last update: ${DateTime.now().toString().split('.').first}",
+          content: "Checking status... ${now.toString().split('.').first}",
         );
 
-        print("Running background task...");
-        await sendApiData();
-        
+        if (hour >= 7 && hour < 24) { // Only run API call during active hours
+          try {
+            print("In active hours, checking location");
+            if (lastPosition == null) {
+              print("No position data available yet");
+              service.setForegroundNotificationInfo(
+                title: "SPITracker",
+                content: "Waiting for location data...",
+              );
+              return;
+            }
+
+            print("Preparing API call with position: ${lastPosition!.latitude}, ${lastPosition!.longitude}");
+            
+            // Prepare API call
+            final body = jsonEncode({
+              'deviceId': deviceId,
+              'latitude': lastPosition!.latitude.toString(),
+              'longitude': lastPosition!.longitude.toString(),
+              'androidVersion': androidVersion,
+              'model': model,
+            });
+
+            print("Sending API request...");
+            // Create HTTP client
+            final httpClient = HttpClient()
+              ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
+            
+            final request = await httpClient.postUrl(
+              Uri.parse('https://gpstracking-tkgsit.aeonth.com/v1/GPS/gps-save-papi')
+            );
+            
+            request.headers.set('content-type', 'application/json');
+            request.write(body);
+            
+            final response = await request.close();
+            final responseBody = await response.transform(utf8.decoder).join();
+
+            // Update notification with status
+            if (response.statusCode == 200) {
+              print("Background API call successful");
+              service.setForegroundNotificationInfo(
+                title: "SPITracker",
+                content: "Last update: ${now.toString().split('.').first} (Success)",
+              );
+            } else {
+              print("Background API call failed: ${response.statusCode}");
+              service.setForegroundNotificationInfo(
+                title: "SPITracker",
+                content: "Last update failed: ${now.toString().split('.').first}",
+              );
+            }
+          } catch (e) {
+            print("Error in API call: $e");
+            service.setForegroundNotificationInfo(
+              title: "SPITracker",
+              content: "Error: ${e.toString().split('\n').first}",
+            );
+          }
+        } else {
+          print("Outside active hours");
+          service.setForegroundNotificationInfo(
+            title: "SPITracker",
+            content: "Outside active hours (7:00-24:00)",
+          );
+        }
+
+        print("Background cycle completed");
+      } else {
+        print("Service not in foreground, attempting to set as foreground");
+        await service.setAsForegroundService();
       }
     });
   }
