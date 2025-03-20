@@ -355,7 +355,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Device Info App',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color.fromARGB(255, 27, 50, 176)),
       ),
       home: const MyHomePage(title: 'SPITracker'),
       debugShowCheckedModeBanner: false,
