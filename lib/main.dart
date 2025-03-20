@@ -11,9 +11,18 @@ import 'dart:async';
 import 'package:app_settings/app_settings.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+class MyHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await initializeService(); // Initialize background service
+  HttpOverrides.global = MyHttpOverrides();
+  await initializeService();
   runApp(const MyApp());
 }
 
@@ -134,14 +143,24 @@ Future<String> sendApiData() async {
         return "Error: Missing Required Data";
       }
 
-      final response = await http.post(
-        Uri.parse('https://httpbin.org/post'),
-        body: {
-          'device_id': deviceId,
+      print("calling API...");
+
+      final body = jsonEncode({
+          'deviceId': deviceId,
           'latitude': position.latitude.toString(),
           'longitude': position.longitude.toString(),
-          'android_version': androidVersion,
+          'androidVersion': androidVersion,
           'model': model,
+        });
+
+      final response = await http.post(
+        Uri.parse('https://gpstracking-tkgsit.aeonth.com/v1/GPS/gps-save-papi'),
+        headers: {'Content-Type': 'application/json'},
+        body: body,
+      ).timeout(
+        Duration(seconds: 20),
+        onTimeout: () {
+          throw TimeoutException('The connection has timed out');
         },
       );
 
@@ -149,8 +168,9 @@ Future<String> sendApiData() async {
         print("API call successful.");
         return "Completed 200 on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
       } else {
-        print("API call failed: ${response.statusCode}");
-        return "Failed Status ${response.statusCode} on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
+        print("Body: ${body}");
+        print("API call failed: ${response.statusCode} ${response.body}");
+        return "Failed Status ${response.statusCode} ${response.body} on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
       }
     }
     return "Skipped (Out of Active Hours)";
