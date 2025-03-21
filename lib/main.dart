@@ -59,6 +59,7 @@ class _MyHomePageState extends State<MyHomePage> {
   String _serviceStatus = "Checking..."; // Add service status tracking
   String _locationInfo = "Location not available"; // Add location info tracking
   String _appVersion = "Loading application version";
+  bool _isIgnoringBatteryOptimization = false;
 
   final LocationService _locationService = LocationService();
   final DeviceInfoService _deviceInfoService = DeviceInfoService();
@@ -85,6 +86,7 @@ class _MyHomePageState extends State<MyHomePage> {
     _checkServiceStatus();
     _checkLocationPermission();
     _updateLocationInfo();
+    _checkBatteryOptimizationStatus();
   }
 
   // Add method to check background service status
@@ -141,6 +143,24 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  // Add this method to check battery optimization status
+  Future<void> _checkBatteryOptimizationStatus() async {
+    if (Platform.isAndroid) {
+      try {
+        bool isIgnoring = await Permission.ignoreBatteryOptimizations.isGranted;
+        setState(() {
+          _isIgnoringBatteryOptimization = isIgnoring;
+        });
+        myPrint("Battery optimization ignored: $isIgnoring");
+      } catch (e) {
+        myPrint("Error checking battery optimization status: $e");
+        setState(() {
+          _isIgnoringBatteryOptimization = false;
+        });
+      }
+    }
+  }
+
   void _toggleBackgroundService() async {
     if (_isBackgroundEnabled) {
       await _backgroundService.stopService();
@@ -179,16 +199,22 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
-  // Add method to open battery optimization settings
+  // Modify your _openBatteryOptimizationSettings method to update status after settings change
   Future<void> _openBatteryOptimizationSettings() async {
     if (Platform.isAndroid) {
       try {
         // Use app_settings package with the correct method
         await AppSettings.openAppSettings(type: AppSettingsType.batteryOptimization);
+        // Check status again after a delay to allow user to make changes
+        Future.delayed(Duration(seconds: 2), () {
+          _checkBatteryOptimizationStatus();
+        });
       } catch (e) {
         // Fallback to permission_handler if app_settings fails
         try {
           await Permission.ignoreBatteryOptimizations.request();
+          // Check status immediately after request
+          _checkBatteryOptimizationStatus();
         } catch (e2) {
           myPrint("Failed to open settings: $e2");
           // Show a dialog with instructions if both methods fail
@@ -292,6 +318,7 @@ class _MyHomePageState extends State<MyHomePage> {
                       _buildInfoTable([
                         {"App Version": _appVersion},
                         {"Service Status": _serviceStatus},
+                        {"Battery Optimization": _isIgnoringBatteryOptimization ? "Disabled (Good)" : "Enabled (May affect background service)"},
                       ]),
                       SizedBox(height: 16),
                       Row(
@@ -310,9 +337,11 @@ class _MyHomePageState extends State<MyHomePage> {
                           ElevatedButton.icon(
                             onPressed: _openBatteryOptimizationSettings,
                             icon: Icon(Icons.battery_charging_full),
-                            label: Text("Battery Settings"),
+                            label: Text(_isIgnoringBatteryOptimization 
+                                ? "Battery Opt. Disabled" 
+                                : "Disable Battery Opt."),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.orange,
+                              backgroundColor: _isIgnoringBatteryOptimization ? Colors.green : Colors.orange,
                               padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                             ),
@@ -439,6 +468,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   onPressed: () {
                     _checkServiceStatus();
                     _updateLocationInfo();
+                    _checkBatteryOptimizationStatus();
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(content: Text("Status refreshed"))
                     );
