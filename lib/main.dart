@@ -1,273 +1,28 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:device_info_plus/device_info_plus.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:geolocator/geolocator.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'dart:io';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 import 'package:app_settings/app_settings.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:flutter/foundation.dart';
-import 'dart:developer' as developer;
-import 'dart:collection';
-import 'package:path_provider/path_provider.dart';
 import 'log_screen.dart'; // Add this import for the LogScreen
 import 'log_utils.dart';
 import 'location_service.dart';
 import 'app_config.dart';
 import 'device_info_service.dart';
-
-class MyHttpOverrides extends HttpOverrides {
-  @override
-  HttpClient createHttpClient(SecurityContext? context) {
-    return super.createHttpClient(context)
-      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
-  }
-}
+import 'background_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = MyHttpOverrides();
-  await initializeService();
+  
+  // Initialize the background service
+  final backgroundService = BackgroundServiceManager();
+  await backgroundService.initializeService();
+  
   runApp(const MyApp());
-}
-
-// Initialize Background Service
-Future<void> initializeService() async {
-  final service = FlutterBackgroundService();
-
-  await service.configure(
-    androidConfiguration: AndroidConfiguration(
-      onStart: onStart,
-      autoStart: true,
-      isForegroundMode: true,
-      foregroundServiceNotificationId: 888,
-      initialNotificationTitle: 'SPITracker',
-      initialNotificationContent: 'Tracking location in background',
-      // foregroundServiceNotificationTitle: 'SPITracker',
-      // notificationChannelId: 'spi_tracker_channel',
-      // notificationChannelDescription: 'Shows tracking notification',
-    ),
-    iosConfiguration: IosConfiguration(
-      onForeground: onStart,
-      onBackground: onBackground,
-      autoStart: true,
-    ),
-  );
-
-  service.startService();
-}
-
-// Background service logic
-@pragma('vm:entry-point')
-void onStart(ServiceInstance service) async {
-  DartPluginRegistrant.ensureInitialized();
-  WidgetsFlutterBinding.ensureInitialized();
-  // Add certificate bypass for background service
-  HttpOverrides.global = MyHttpOverrides();
-  
-  myPrint("Background Service Started");
-
-  // Use device info service
-  final deviceInfoService = DeviceInfoService();
-  await deviceInfoService.initializeDeviceInfo();
-  
-  // Use location service
-  final locationService = LocationService();
-  await locationService.startTracking();
-  myPrint("Location service initialized");
-
-  if (service is AndroidServiceInstance) {
-    service.on('stopService').listen((event) {
-      locationService.stopTracking();
-      service.stopSelf();
-    });
-
-    await service.setAsForegroundService();
-    myPrint("Service set as foreground service");
-
-    // Update notification content periodically
-    Timer.periodic(Duration(minutes: AppConfig.BACKGROUND_UPDATE_INTERVAL_MINUTES), (timer) async {
-      myPrint("Timer triggered at ${DateTime.now()}");
-      if (await service.isForegroundService()) {
-        final now = DateTime.now();
-        final hour = now.hour;
-
-        service.setForegroundNotificationInfo(
-          title: "SPITracker",
-          content: "Checking status... ${now.toString().split('.').first}",
-        );
-
-        if (AppConfig.isWithinActiveHours(now)) {
-          try {
-            myPrint("In active hours, checking location");
-            final lastPosition = locationService.lastPosition;
-            if (lastPosition == null) {
-              myPrint("No position data available yet");
-              service.setForegroundNotificationInfo(
-                title: "SPITracker",
-                content: "Waiting for location data...",
-              );
-              return;
-            }
-
-            myPrint("Preparing API call with position: ${lastPosition.latitude}, ${lastPosition.longitude}");
-            
-            // Use device info service for API payload
-            final body = jsonEncode({
-              'deviceId': deviceInfoService.deviceId,
-              'latitude': lastPosition.latitude.toString(),
-              'longitude': lastPosition.longitude.toString(),
-              'androidVersion': deviceInfoService.osVersion,
-              'model': deviceInfoService.deviceModel,
-            });
-
-            myPrint("Sending API request...");
-            // Create HTTP client
-            final httpClient = HttpClient()
-              ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
-            
-            final request = await httpClient.postUrl(
-              Uri.parse(AppConfig.getApiUrl())
-            );
-            
-            request.headers.set('content-type', 'application/json');
-            request.write(body);
-            
-            final response = await request.close().timeout(
-              Duration(seconds: AppConfig.API_TIMEOUT_SECONDS),
-              onTimeout: () {
-                throw TimeoutException('The connection has timed out');
-              },
-            );
-
-            final responseBody = await response.transform(utf8.decoder).join();
-
-            // Update notification with status
-            if (response.statusCode == 200) {
-              myPrint("Background API call successful");
-              service.setForegroundNotificationInfo(
-                title: "SPITracker",
-                content: "Last update: ${now.toString().split('.').first} (Success)",
-              );
-            } else {
-              myPrint("Background API call failed: ${response.statusCode}");
-              service.setForegroundNotificationInfo(
-                title: "SPITracker",
-                content: "Last update failed: ${now.toString().split('.').first}",
-              );
-            }
-          } catch (e) {
-            myPrint("Error in API call: $e");
-            service.setForegroundNotificationInfo(
-              title: "SPITracker",
-              content: "Error: ${e.toString().split('\n').first}",
-            );
-          }
-        } else {
-          myPrint("Outside active hours");
-          service.setForegroundNotificationInfo(
-            title: "SPITracker",
-            content: "Outside active hours (${AppConfig.ACTIVE_HOURS_START}:00-${AppConfig.ACTIVE_HOURS_END}:00)",
-          );
-        }
-
-        myPrint("Background cycle completed");
-      } else {
-        myPrint("Service not in foreground, attempting to set as foreground");
-        await service.setAsForegroundService();
-      }
-    });
-  }
-}
-
-// iOS Background Task
-Future<bool> onBackground(ServiceInstance service) async {
-  myPrint("Background service running in background mode.");
-  return true;
-}
-
-// API Call Function
-Future<String> sendApiData() async {
-  try {
-    final now = DateTime.now();
-    
-    if (AppConfig.isWithinActiveHours(now)) {
-      // Use location service
-      final locationService = LocationService();
-      bool hasPermission = await locationService.checkAndRequestLocationPermission();
-      if (!hasPermission) {
-        return "Error: Location permission denied";
-      }
-      
-      final position = await locationService.getCurrentPosition();
-      if (position == null) {
-        return "Error: Couldn't get location";
-      }
-      
-      // Use device info service
-      final deviceInfoService = DeviceInfoService();
-      await deviceInfoService.initializeDeviceInfo();
-      
-      // Create API payload
-      final body = jsonEncode({
-        'deviceId': deviceInfoService.deviceId,
-        'latitude': position.latitude.toString(),
-        'longitude': position.longitude.toString(),
-        'androidVersion': deviceInfoService.osVersion,
-        'model': deviceInfoService.deviceModel,
-      });
-
-      myPrint("calling API...");
-
-      // Create a custom HTTP client that ignores certificate verification
-      final httpClient = HttpClient()
-        ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
-      
-      final request = await httpClient.postUrl(
-        Uri.parse(AppConfig.getApiUrl())
-      );
-      
-      request.headers.set('content-type', 'application/json');
-      request.write(body);
-      
-      final response = await request.close().timeout(
-        Duration(seconds: AppConfig.API_TIMEOUT_SECONDS),
-        onTimeout: () {
-          throw TimeoutException('The connection has timed out');
-        },
-      );
-
-      final responseBody = await response.transform(utf8.decoder).join();
-
-      if (response.statusCode == 200) {
-        myPrint("API call successful.");
-        return "Completed 200 on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
-      } else {
-        myPrint("Body: ${body}");
-        myPrint("API call failed: ${response.statusCode} ${responseBody}");
-        return "Failed Status ${response.statusCode} ${responseBody} on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
-      }
-    }
-    return "Skipped (Out of Active Hours)";
-  } catch (e) {
-    myPrint("Error in API call: $e");
-    return "Error: $e";
-  }
-}
-
-// Convert month number to month name
-String _getMonthName(int month) {
-  const monthNames = [
-    "", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-  ];
-  return monthNames[month];
 }
 
 class MyApp extends StatelessWidget {
@@ -307,6 +62,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   final LocationService _locationService = LocationService();
   final DeviceInfoService _deviceInfoService = DeviceInfoService();
+  final BackgroundServiceManager _backgroundService = BackgroundServiceManager();
 
   @override
   void initState() {
@@ -334,8 +90,7 @@ class _MyHomePageState extends State<MyHomePage> {
   // Add method to check background service status
   Future<void> _checkServiceStatus() async {
     try {
-      final service = FlutterBackgroundService();
-      final isRunning = await service.isRunning();
+      final isRunning = await _backgroundService.isServiceRunning();
       
       setState(() {
         _isBackgroundEnabled = isRunning;
@@ -387,16 +142,14 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void _toggleBackgroundService() async {
-    final service = FlutterBackgroundService();
-    
     if (_isBackgroundEnabled) {
-      service.invoke("stopService");
+      await _backgroundService.stopService();
       setState(() {
         _isBackgroundEnabled = false;
         _serviceStatus = "Background service stopped";
       });
     } else {
-      await service.startService();
+      await _backgroundService.startService();
       setState(() {
         _isBackgroundEnabled = true;
         _serviceStatus = "Background service started";
@@ -415,17 +168,7 @@ class _MyHomePageState extends State<MyHomePage> {
       _apiStatus = "Calling API...";
     });
 
-    // Check location permission before calling API
-    bool hasPermission = await _locationService.checkAndRequestLocationPermission();
-    if (!hasPermission) {
-      setState(() {
-        _isApiCalling = false;
-        _apiStatus = "Error: Location permission denied";
-      });
-      return;
-    }
-
-    String result = await sendApiData();
+    String result = await sendApiData();  // Using the function from background_service.dart
     
     // Update location info after API call
     _updateLocationInfo();
