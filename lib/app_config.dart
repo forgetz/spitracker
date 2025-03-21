@@ -40,7 +40,11 @@ class AppConfig {
     'INFO',
     'WARNING',
     'ERROR',
-    'DEBUG'
+    'DEBUG',
+    'BG-INFO',
+    'BG-WARNING',
+    'BG-ERROR',
+    'BG-DEBUG',
   ];
   
   // Check if a specific log level should be captured

@@ -12,15 +12,255 @@ import 'log_utils.dart';
 import 'location_service.dart';
 import 'app_config.dart';
 import 'device_info_service.dart';
-import 'background_service.dart';
+
+// HTTP certificate bypass helper
+class MyHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
+  }
+}
+
+// Background service entry point
+@pragma('vm:entry-point')
+void onStart(ServiceInstance service) async {
+  DartPluginRegistrant.ensureInitialized();
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Set up HTTP certificate bypass for background service
+  HttpOverrides.global = MyHttpOverrides();
+  
+  // Add a special log entry to indicate background service start
+  logBackground("Background Service Started");
+
+  // Initialize device info
+  final deviceInfoService = DeviceInfoService();
+  await deviceInfoService.initializeDeviceInfo();
+  
+  // Initialize location service
+  final locationService = LocationService();
+  await locationService.startTracking();
+  logBackground("Location service initialized in background");
+
+  if (service is AndroidServiceInstance) {
+    service.on('stopService').listen((event) {
+      locationService.stopTracking();
+      logBackground("Service stopping due to stopService request");
+      service.stopSelf();
+    });
+
+    await service.setAsForegroundService();
+    logBackground("Service set as foreground service");
+
+    // Update notification content periodically
+    Timer.periodic(Duration(minutes: AppConfig.BACKGROUND_UPDATE_INTERVAL_MINUTES), (timer) async {
+      logBackground("Timer triggered at ${DateTime.now()}");
+      
+      if (await service.isForegroundService()) {
+        final now = DateTime.now();
+
+        service.setForegroundNotificationInfo(
+          title: "SPITracker",
+          content: "Checking status... ${now.toString().split('.').first}",
+        );
+
+        if (AppConfig.isWithinActiveHours(now)) {
+          try {
+            logBackground("In active hours, checking location");
+            final lastPosition = locationService.lastPosition;
+            
+            if (lastPosition == null) {
+              logBackground("No position data available yet", isWarning: true);
+              service.setForegroundNotificationInfo(
+                title: "SPITracker",
+                content: "Waiting for location data...",
+              );
+              return;
+            }
+
+            logBackground("Preparing API call with position: ${lastPosition.latitude}, ${lastPosition.longitude}");
+            
+            // Prepare API call
+            final body = jsonEncode({
+              'deviceId': deviceInfoService.deviceId,
+              'latitude': lastPosition.latitude.toString(),
+              'longitude': lastPosition.longitude.toString(),
+              'androidVersion': deviceInfoService.osVersion,
+              'model': deviceInfoService.deviceModel,
+            });
+
+            logBackground("Sending API request...");
+            
+            // Create HTTP client
+            final httpClient = HttpClient()
+              ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
+            
+            final request = await httpClient.postUrl(
+              Uri.parse(AppConfig.getApiUrl())
+            );
+            
+            request.headers.set('content-type', 'application/json');
+            request.write(body);
+            
+            final response = await request.close();
+            final responseBody = await response.transform(utf8.decoder).join();
+
+            // Update notification with status
+            if (response.statusCode == 200) {
+              logBackground("Background API call successful");
+              service.setForegroundNotificationInfo(
+                title: "SPITracker",
+                content: "Last update: ${now.toString().split('.').first} (Success)",
+              );
+            } else {
+              logBackground("Background API call failed: ${response.statusCode}", isError: true);
+              service.setForegroundNotificationInfo(
+                title: "SPITracker",
+                content: "Last update failed: ${now.toString().split('.').first}",
+              );
+            }
+          } catch (e) {
+            logBackground("Error in API call: $e", isError: true);
+            service.setForegroundNotificationInfo(
+              title: "SPITracker",
+              content: "Error: ${e.toString().split('\n').first}",
+            );
+          }
+        } else {
+          logBackground("Outside active hours");
+          service.setForegroundNotificationInfo(
+            title: "SPITracker",
+            content: "Outside active hours (${AppConfig.ACTIVE_HOURS_START}:00-${AppConfig.ACTIVE_HOURS_END}:00)",
+          );
+        }
+
+        logBackground("Background cycle completed");
+      } else {
+        logBackground("Service not in foreground, attempting to set as foreground", isWarning: true);
+        await service.setAsForegroundService();
+      }
+    });
+  }
+}
+
+// iOS Background Task
+@pragma('vm:entry-point')
+Future<bool> onBackground(ServiceInstance service) async {
+  logInfo("Background service running in background mode.");
+  return true;
+}
+
+// Initialize the background service
+Future<void> initializeBackgroundService() async {
+  final service = FlutterBackgroundService();
+
+  await service.configure(
+    androidConfiguration: AndroidConfiguration(
+      onStart: onStart,
+      autoStart: true,
+      isForegroundMode: true,
+      foregroundServiceNotificationId: 888,
+      initialNotificationTitle: 'SPITracker',
+      initialNotificationContent: 'Tracking location in background',
+      autoStartOnBoot: true,
+    ),
+    iosConfiguration: IosConfiguration(
+      onForeground: onStart,
+      onBackground: onBackground,
+      autoStart: true,
+    ),
+  );
+
+  service.startService();
+}
+
+// API Call Function
+Future<String> sendApiData() async {
+  try {
+    final now = DateTime.now();
+    
+    if (AppConfig.isWithinActiveHours(now)) {
+      // Use location service
+      final locationService = LocationService();
+      bool hasPermission = await locationService.checkAndRequestLocationPermission();
+      if (!hasPermission) {
+        logBackground("Location permission denied", isError: true);
+        return "Error: Location permission denied";
+      }
+      
+      final position = await locationService.getCurrentPosition();
+      if (position == null) {
+        logBackground("Couldn't get location", isError: true);
+        return "Error: Couldn't get location";
+      }
+      
+      // Use device info service
+      final deviceInfoService = DeviceInfoService();
+      await deviceInfoService.initializeDeviceInfo();
+      
+      logBackground("Calling API from foreground...");
+
+      final body = jsonEncode({
+        'deviceId': deviceInfoService.deviceId,
+        'latitude': position.latitude.toString(),
+        'longitude': position.longitude.toString(),
+        'androidVersion': deviceInfoService.osVersion,
+        'model': deviceInfoService.deviceModel,
+      });
+
+      // Create a custom HTTP client that ignores certificate verification
+      final httpClient = HttpClient()
+        ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
+      
+      final request = await httpClient.postUrl(
+        Uri.parse(AppConfig.getApiUrl())
+      );
+      
+      request.headers.set('content-type', 'application/json');
+      request.write(body);
+      
+      final response = await request.close().timeout(
+        Duration(seconds: AppConfig.API_TIMEOUT_SECONDS),
+        onTimeout: () {
+          logBackground("API call timed out", isError: true);
+          throw TimeoutException('The connection has timed out');
+        },
+      );
+
+      final responseBody = await response.transform(utf8.decoder).join();
+
+      if (response.statusCode == 200) {
+        logBackground("API call successful");
+        return "Completed 200 on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
+      } else {
+        logBackground("API call failed: ${response.statusCode} ${responseBody}", isError: true);
+        return "Failed Status ${response.statusCode} ${responseBody} on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
+      }
+    }
+    logBackground("Skipped API call (Out of Active Hours)");
+    return "Skipped (Out of Active Hours)";
+  } catch (e) {
+    logBackground("Error in API call: $e", isError: true);
+    return "Error: $e";
+  }
+}
+
+// Convert month number to month name
+String _getMonthName(int month) {
+  const monthNames = [
+    "", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+  ];
+  return monthNames[month];
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = MyHttpOverrides();
   
-  // Initialize the background service
-  final backgroundService = BackgroundServiceManager();
-  await backgroundService.initializeService();
+  // Initialize the background service directly
+  await initializeBackgroundService();
   
   runApp(const MyApp());
 }
@@ -63,7 +303,6 @@ class _MyHomePageState extends State<MyHomePage> {
 
   final LocationService _locationService = LocationService();
   final DeviceInfoService _deviceInfoService = DeviceInfoService();
-  final BackgroundServiceManager _backgroundService = BackgroundServiceManager();
 
   @override
   void initState() {
@@ -87,12 +326,15 @@ class _MyHomePageState extends State<MyHomePage> {
     _checkLocationPermission();
     _updateLocationInfo();
     _checkBatteryOptimizationStatus();
+    
+    // Add auto-start on boot verification
+    _verifyAutoStartOnBoot();
   }
 
   // Add method to check background service status
   Future<void> _checkServiceStatus() async {
     try {
-      final isRunning = await _backgroundService.isServiceRunning();
+      final isRunning = await isServiceRunning();
       
       setState(() {
         _isBackgroundEnabled = isRunning;
@@ -161,15 +403,51 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  // Add this method to verify and enable auto-start on boot
+  Future<void> _verifyAutoStartOnBoot() async {
+    if (Platform.isAndroid) {
+      try {
+        // Just make sure the service is running
+        bool isRunning = await isServiceRunning();
+        if (!isRunning) {
+          await startService();
+          myPrint("Started service to ensure boot auto-start works");
+        } else {
+          myPrint("Service is running with boot auto-start enabled in configuration");
+        }
+      } catch (e) {
+        myPrint("Error checking service status: $e");
+      }
+    }
+  }
+
+  // Check if the service is running
+  Future<bool> isServiceRunning() async {
+    final service = FlutterBackgroundService();
+    return await service.isRunning();
+  }
+
+  // Start the service
+  Future<void> startService() async {
+    final service = FlutterBackgroundService();
+    await service.startService();
+  }
+
+  // Stop the service
+  Future<void> stopService() async {
+    final service = FlutterBackgroundService();
+    service.invoke("stopService");
+  }
+
   void _toggleBackgroundService() async {
     if (_isBackgroundEnabled) {
-      await _backgroundService.stopService();
+      await stopService();
       setState(() {
         _isBackgroundEnabled = false;
         _serviceStatus = "Background service stopped";
       });
     } else {
-      await _backgroundService.startService();
+      await startService();
       setState(() {
         _isBackgroundEnabled = true;
         _serviceStatus = "Background service started";
@@ -521,3 +799,4 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 }
+

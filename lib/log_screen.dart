@@ -14,6 +14,11 @@ class _LogScreenState extends State<LogScreen> {
   List<LogEntry> _logs = [];
   Timer? _refreshTimer;
 
+  bool _showBackgroundLogs = true;
+  bool _showInfoLogs = true;
+  bool _showWarningLogs = true;
+  bool _showErrorLogs = true;
+
   @override
   void initState() {
     super.initState();
@@ -49,6 +54,62 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
+  List<String> getFilteredLogs(List<String> allLogs) {
+    return allLogs.where((log) {
+      if (log.contains("[BG-") && !_showBackgroundLogs) return false;
+      
+      if (!_showInfoLogs && (log.contains("[INFO]") || log.contains("[BG-INFO]"))) return false;
+      if (!_showWarningLogs && (log.contains("[WARN]") || log.contains("[BG-WARN]"))) return false;
+      if (!_showErrorLogs && (log.contains("[ERROR]") || log.contains("[BG-ERROR]"))) return false;
+      
+      return true;
+    }).toList();
+  }
+
+  Row buildFilterRow() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        FilterChip(
+          label: Text("Background"),
+          selected: _showBackgroundLogs,
+          onSelected: (value) {
+            setState(() {
+              _showBackgroundLogs = value;
+            });
+          },
+        ),
+        FilterChip(
+          label: Text("Info"),
+          selected: _showInfoLogs,
+          onSelected: (value) {
+            setState(() {
+              _showInfoLogs = value;
+            });
+          },
+        ),
+        FilterChip(
+          label: Text("Warning"),
+          selected: _showWarningLogs,
+          onSelected: (value) {
+            setState(() {
+              _showWarningLogs = value;
+            });
+          },
+        ),
+        FilterChip(
+          label: Text("Error"),
+          selected: _showErrorLogs,
+          onSelected: (value) {
+            setState(() {
+              _showErrorLogs = value;
+            });
+          },
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Scroll to bottom after build
@@ -61,8 +122,31 @@ class _LogScreenState extends State<LogScreen> {
           IconButton(
             icon: Icon(Icons.delete),
             onPressed: () async {
-              await clearLogs();
-              _refreshLogs();
+              // Show confirmation dialog
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: Text("Clear Logs"),
+                  content: Text("Are you sure you want to clear all logs?"),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: Text("Cancel"),
+                    ),
+                    TextButton(
+                      onPressed: () async {
+                        Navigator.pop(context); // Close dialog
+                        await clearLogs();
+                        _refreshLogs();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text("Logs cleared"))
+                        );
+                      },
+                      child: Text("Clear"),
+                    ),
+                  ],
+                ),
+              );
             },
             tooltip: 'Clear logs',
           ),
@@ -70,6 +154,11 @@ class _LogScreenState extends State<LogScreen> {
       ),
       body: Column(
         children: [
+          // Add filter chips to select log types
+          // Padding(
+          //   padding: const EdgeInsets.all(8.0),
+          //   child: buildFilterRow(),
+          // ),
           Expanded(
             child: _logs.isEmpty
                 ? Center(child: Text('No logs available'))
@@ -78,6 +167,8 @@ class _LogScreenState extends State<LogScreen> {
                     itemCount: _logs.length,
                     itemBuilder: (context, index) {
                       final log = _logs[index];
+                      
+                      // Standard log entry without special formatting for background logs
                       return Padding(
                         padding: const EdgeInsets.symmetric(vertical: 2.0, horizontal: 8.0),
                         child: Row(
@@ -95,7 +186,8 @@ class _LogScreenState extends State<LogScreen> {
                               '${log.level}: ',
                               style: TextStyle(
                                 fontSize: 12,
-                                color: log.levelColor,
+                                // Use the color from the LogEntry class instead of a standard color
+                                color: log.levelColor,  // This uses the colors defined in LogEntry
                                 fontWeight: FontWeight.bold,
                               ),
                             ),

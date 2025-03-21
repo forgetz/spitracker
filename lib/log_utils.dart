@@ -17,6 +17,15 @@ class LogEntry {
       '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}:${timestamp.second.toString().padLeft(2, '0')}';
   
   Color get levelColor {
+    // Special colors for background service logs
+    if (level.startsWith('BG-')) {
+      if (level == 'BG-ERROR') return Colors.red.shade700;      // Distinct orange-red for background errors
+      if (level == 'BG-WARN') return Colors.blue.shade900;   // Darker amber for background warnings
+      if (level == 'BG-INFO') return Colors.purple;             // Teal for regular background logs
+      return Colors.teal;                                   // Default for any other background logs
+    }
+    
+    // Regular log colors
     switch (level) {
       case 'ERROR':
         return Colors.red;
@@ -33,6 +42,60 @@ class LogEntry {
 // Constants now come from AppConfig
 const int MAX_LOGS = AppConfig.MAX_LOG_ENTRIES;
 const String LOG_FILE_PATH = AppConfig.LOG_FILE_NAME;
+
+// A list to store log entries in memory
+List<String> _logEntries = [];
+const int MAX_LOG_ENTRIES = 1000; // Limit to prevent memory issues
+
+// Add a new log entry to the storage
+void addLogEntry(String logEntry) {
+  // Add the new log entry
+  _logEntries.add(logEntry);
+  
+  // Keep log size manageable by removing old entries if needed
+  if (_logEntries.length > MAX_LOG_ENTRIES) {
+    _logEntries.removeAt(0); // Remove oldest entry
+  }
+  
+  // Optionally write to persistent storage
+  _saveLogs();
+}
+
+// Helper function to save logs to persistent storage
+void _saveLogs() {
+  // This might use shared_preferences, local file storage, etc.
+  // to save logs between app sessions
+}
+
+// Function to get all log entries
+List<String> getLogs() {
+  return List.from(_logEntries); // Return a copy of the logs
+}
+
+// Add this helper function to get the log file
+Future<File> _getLogFile() async {
+  final directory = await getApplicationDocumentsDirectory();
+  final file = File('${directory.path}/${AppConfig.LOG_FILE_NAME}');
+  return file;
+}
+
+// Update the clearLogs function to be async
+Future<void> clearLogs() async {
+  try {
+    // Clear the in-memory logs
+    _logEntries.clear();
+    
+    // Also clear the log file if using file storage
+    final file = await _getLogFile();
+    if (await file.exists()) {
+      await file.writeAsString('');
+    }
+    
+    print("Logs cleared successfully");
+  } catch (e) {
+    print("Error clearing logs: $e");
+  }
+}
 
 // Write a log entry to the file
 Future<void> writeLogToFile(String message, {String level = 'INFO'}) async {
@@ -122,20 +185,6 @@ Future<List<LogEntry>> loadLogsFromFile() async {
   return logs;
 }
 
-// Clear all logs
-Future<void> clearLogs() async {
-  try {
-    final directory = await getApplicationDocumentsDirectory();
-    final file = File('${directory.path}/${AppConfig.LOG_FILE_NAME}');
-    
-    if (await file.exists()) {
-      await file.delete();
-    }
-  } catch (e) {
-    print('Error clearing logs: $e');
-  }
-}
-
 // Print to console and log to file
 void myPrint(String message, {String level = 'INFO'}) {
   // Console logging
@@ -157,4 +206,12 @@ void myPrint(String message, {String level = 'INFO'}) {
 void logInfo(String message) => myPrint(message, level: 'INFO');
 void logWarning(String message) => myPrint(message, level: 'WARNING');
 void logError(String message) => myPrint(message, level: 'ERROR');
-void logDebug(String message) => myPrint(message, level: 'DEBUG'); 
+void logDebug(String message) => myPrint(message, level: 'DEBUG');
+
+/// Log a message from the background service
+void logBackground(String message, {bool isError = false, bool isWarning = false}) {
+  final level = isError ? "BG-ERROR" : isWarning ? "BG-WARN" : "BG-INFO";
+  
+  // Use the myPrint mechanism to ensure logs are written to file
+  myPrint(message, level: level);
+} 
