@@ -94,15 +94,15 @@ Future<List<LogEntry>> loadLogsFromFile() async {
               DateTime.tryParse(logJson['timestamp'] ?? '') ?? DateTime.now(),
             ));
           } catch (e) {
-            print('Error parsing log entry: $e - Content: $line');
-            // Try to recover the message even if JSON is corrupted
-            if (line.contains(':')) {
-              logs.add(LogEntry(
-                line,
-                'ERROR',
-                DateTime.now(),
-              ));
-            }
+            // print('Error parsing log entry: $e - Content: $line');
+            // // Try to recover the message even if JSON is corrupted
+            // if (line.contains(':')) {
+            //   logs.add(LogEntry(
+            //     line,
+            //     'ERROR',
+            //     DateTime.now(),
+            //   ));
+            // }
           }
         }
       }
