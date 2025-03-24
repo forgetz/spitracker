@@ -662,6 +662,27 @@ class _MyHomePageState extends State<MyHomePage> {
                           ),
                           SizedBox(width: 10),
                           ElevatedButton.icon(
+                            onPressed: () async {
+                              await _checkServiceStatus();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text("Background service status: ${_isBackgroundEnabled ? 'Running' : 'Stopped'}")),
+                              );
+                            },
+                            icon: Icon(Icons.health_and_safety),
+                            label: Text("Check Status"),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.teal,
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          ElevatedButton.icon(
                             onPressed: _openBatteryOptimizationSettings,
                             icon: Icon(Icons.battery_charging_full),
                             label: Text(_isIgnoringBatteryOptimization 
