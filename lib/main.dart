@@ -25,8 +25,8 @@ class MyHttpOverrides extends HttpOverrides {
 // Background service entry point
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
-  DartPluginRegistrant.ensureInitialized();
   WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
   
   // Set up HTTP certificate bypass for background service
   HttpOverrides.global = MyHttpOverrides();
@@ -44,11 +44,32 @@ void onStart(ServiceInstance service) async {
   logBackground("Location service initialized in background");
 
   if (service is AndroidServiceInstance) {
+    service.on('setAsForeground').listen((event) {
+      logBackground("Service setAsForeground listen");
+      service.setAsForegroundService();
+    });
+
+    service.on('setAsBackground').listen((event) {
+      logBackground("Service setAsBackground listen");
+      service.setAsBackgroundService();
+    });
+  }
+
+  if (service is AndroidServiceInstance) {
+
     service.on('stopService').listen((event) {
       locationService.stopTracking();
       logBackground("Service stopping due to stopService request");
       service.stopSelf();
     });
+
+    try {
+      // Create notification and set as foreground service
+      await service.setAsForegroundService();
+      logBackground("Successfully set as foreground service with notification");
+    } catch (e) {
+      logBackground("Error setting foreground service: $e", isError: true);
+    }
 
     await service.setAsForegroundService();
     logBackground("Service set as foreground service");
@@ -164,6 +185,10 @@ Future<void> initializeBackgroundService() async {
       initialNotificationTitle: 'SPITracker',
       initialNotificationContent: 'Tracking location in background',
       autoStartOnBoot: true,
+      // notificationChannelId: 'spi_tracker_channel',
+      // notificationChannelName: 'SPITracker Service',
+      // notificationChannelDescription: 'Shows service running in background',
+      // notificationChannelImportance: AndroidNotificationChannelImportance.HIGH,
     ),
     iosConfiguration: IosConfiguration(
       onForeground: onStart,
@@ -172,7 +197,8 @@ Future<void> initializeBackgroundService() async {
     ),
   );
 
-  service.startService();
+  bool started = await service.startService();
+  logBackground("Background service start attempt result: $started");
 }
 
 // API Call Function
@@ -185,13 +211,13 @@ Future<String> sendApiData() async {
       final locationService = LocationService();
       bool hasPermission = await locationService.checkAndRequestLocationPermission();
       if (!hasPermission) {
-        logBackground("Location permission denied", isError: true);
+        logError("Location permission denied");
         return "Error: Location permission denied";
       }
       
       final position = await locationService.getCurrentPosition();
       if (position == null) {
-        logBackground("Couldn't get location", isError: true);
+        logError("Couldn't get location");
         return "Error: Couldn't get location";
       }
       
@@ -199,7 +225,7 @@ Future<String> sendApiData() async {
       final deviceInfoService = DeviceInfoService();
       await deviceInfoService.initializeDeviceInfo();
       
-      logBackground("Calling API from foreground...");
+      logInfo("Calling API from foreground...");
 
       final body = jsonEncode({
         'deviceId': deviceInfoService.deviceId,
@@ -223,7 +249,7 @@ Future<String> sendApiData() async {
       final response = await request.close().timeout(
         Duration(seconds: AppConfig.API_TIMEOUT_SECONDS),
         onTimeout: () {
-          logBackground("API call timed out", isError: true);
+          logError("API call timed out");
           throw TimeoutException('The connection has timed out');
         },
       );
@@ -231,17 +257,17 @@ Future<String> sendApiData() async {
       final responseBody = await response.transform(utf8.decoder).join();
 
       if (response.statusCode == 200) {
-        logBackground("API call successful");
+        logInfo("API call successful");
         return "Completed 200 on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
       } else {
-        logBackground("API call failed: ${response.statusCode} ${responseBody}", isError: true);
+        logError("API call failed: ${response.statusCode} ${responseBody}");
         return "Failed Status ${response.statusCode} ${responseBody} on ${now.day} ${_getMonthName(now.month)} ${now.hour}:${now.minute.toString().padLeft(2, '0')}";
       }
     }
-    logBackground("Skipped API call (Out of Active Hours)");
+    logInfo("Skipped API call (Out of Active Hours)");
     return "Skipped (Out of Active Hours)";
   } catch (e) {
-    logBackground("Error in API call: $e", isError: true);
+    logError("Error in API call: $e");
     return "Error: $e";
   }
 }
@@ -320,6 +346,9 @@ class _MyHomePageState extends State<MyHomePage> {
       _deviceId = _deviceInfoService.deviceId;
       _appVersion = _deviceInfoService.appVersion;
     });
+    
+    // Explicitly request battery optimization exemption
+    await _requestIgnoreBatteryOptimization();
     
     // Check other services
     _checkServiceStatus();
@@ -430,29 +459,31 @@ class _MyHomePageState extends State<MyHomePage> {
   // Start the service
   Future<void> startService() async {
     final service = FlutterBackgroundService();
+    logBackground("startService > FlutterBackgroundService");
     await service.startService();
   }
 
   // Stop the service
   Future<void> stopService() async {
     final service = FlutterBackgroundService();
+    logBackground("stopService > FlutterBackgroundService");
     service.invoke("stopService");
   }
 
   void _toggleBackgroundService() async {
-    if (_isBackgroundEnabled) {
-      await stopService();
-      setState(() {
-        _isBackgroundEnabled = false;
-        _serviceStatus = "Background service stopped";
-      });
-    } else {
+    // if (_isBackgroundEnabled) {
+    //   await stopService();
+    //   setState(() {
+    //     _isBackgroundEnabled = false;
+    //     _serviceStatus = "Background service stopped";
+    //   });
+    // } else {
       await startService();
       setState(() {
         _isBackgroundEnabled = true;
         _serviceStatus = "Background service started";
       });
-    }
+    //}
     
     // Verify actual status after a short delay
     Future.delayed(Duration(milliseconds: 500), () {
@@ -539,6 +570,24 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  Future<void> _requestIgnoreBatteryOptimization() async {
+    if (Platform.isAndroid) {
+      bool isIgnoring = await Permission.ignoreBatteryOptimizations.isGranted;
+      if (!isIgnoring) {
+        try {
+          // Request permission directly
+          PermissionStatus status = await Permission.ignoreBatteryOptimizations.request();
+          logBackground("Battery optimization permission request result: ${status.toString()}");
+          setState(() {
+            _isIgnoringBatteryOptimization = status.isGranted;
+          });
+        } catch (e) {
+          logBackground("Error requesting battery optimization: $e", isError: true);
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -604,7 +653,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         children: [
                           ElevatedButton(
                             onPressed: _toggleBackgroundService,
-                            child: Text(_isBackgroundEnabled ? "Stop Service" : "Start Service"),
+                            child: Text(_isBackgroundEnabled ? "✅ Restart Background Service" : "❌ Restart Background Service"),
                             style: ElevatedButton.styleFrom(
                               padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
